@@ -4,10 +4,15 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application>
-        <!-- Internal payment Activity — launched only via UQPay.startPayment, never exported. -->
+        <!--
+          Internal payment Activity — launched only via UQPay.createPaymentLauncher.
+          Never exported. singleTop so a re-launch reuses the running instance instead of
+          stacking a second live payment.
+        -->
         <activity
             android:name=".ui.UQPayPaymentActivity"
             android:exported="false"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
     </application>
 

@@ -1,0 +1,36 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local config — contains SDK paths and (for sample-app) sandbox keys. Never commit.
+local.properties
+
+# Secrets & credentials — never commit
+*.jks
+*.keystore
+*.pem
+*.p12
+secrets.*
+*.secret
+
+# First-party docs ARE part of the deliverable (acceptance-criteria §12, and CLAUDE.md
+# requires api-reference.md to change alongside any public API change). Re-included here
+# because ~/.gitignore_global ignores `docs/` machine-wide.
+!docs/
+
+# Third-party reference SDK clones — study only, never committed (see docs/reference-sdks/README.md)
+docs/reference-sdks/
+
+# OS
+.DS_Store
+
+# Logs / reports
+*.log

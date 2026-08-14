@@ -39,6 +39,9 @@ public class PaymentResult(
     public val error: UQPayError? = null,
 ) : Parcelable {
 
+    // readParcelable(ClassLoader, Class) requires API 33; this is the only form
+    // available at minSdk 24.
+    @Suppress("DEPRECATION")
     private constructor(parcel: Parcel) : this(
         status = PaymentStatus.entries.getOrElse(parcel.readInt()) { PaymentStatus.FAILED },
         paymentIntentId = parcel.readString().orEmpty(),

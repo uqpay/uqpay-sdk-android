@@ -20,6 +20,11 @@ lifecycle = "2.8.7"
 coroutines = "1.9.0"
 kotlinxSerialization = "1.7.3"
 
+# Freezes the public API surface: `apiCheck` fails the build on an undeclared change.
+# The surface is a permanent compatibility commitment, so it is enforced by CI rather
+# than by review.
+binaryCompatibility = "0.16.3"
+
 junit = "4.13.2"
 androidxTestJunit = "1.2.1"
 espresso = "3.6.1"
@@ -57,3 +62,4 @@ android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 # Parcelable is implemented by hand in the public models — no parcelize plugin needed.
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+binary-compatibility-validator = { id = "org.jetbrains.kotlinx.binary-compatibility-validator", version.ref = "binaryCompatibility" }

@@ -1,0 +1,196 @@
+public final class com/uqpay/sdk/Environment : java/lang/Enum {
+	public static final field PRODUCTION Lcom/uqpay/sdk/Environment;
+	public static final field SANDBOX Lcom/uqpay/sdk/Environment;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/uqpay/sdk/Environment;
+	public static fun values ()[Lcom/uqpay/sdk/Environment;
+}
+
+public final class com/uqpay/sdk/UQPay {
+	public static final field INSTANCE Lcom/uqpay/sdk/UQPay;
+	public static final fun createPaymentLauncher (Landroidx/activity/ComponentActivity;Lcom/uqpay/sdk/payment/PaymentCallback;)Lcom/uqpay/sdk/payment/UQPayPaymentLauncher;
+	public static final fun getVersion ()Ljava/lang/String;
+	public static final fun initialize (Landroid/content/Context;Lcom/uqpay/sdk/UQPayConfiguration;)V
+	public static final fun isInitialized ()Z
+}
+
+public final class com/uqpay/sdk/UQPayConfiguration {
+	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/Environment;Lcom/uqpay/sdk/auth/UQPayTokenProvider;)V
+	public final fun getClientId ()Ljava/lang/String;
+	public final fun getEnvironment ()Lcom/uqpay/sdk/Environment;
+	public final fun getTokenProvider ()Lcom/uqpay/sdk/auth/UQPayTokenProvider;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/uqpay/sdk/auth/UQPayAuthToken {
+	public fun <init> (Ljava/lang/String;J)V
+	public final fun getExpiresAtEpochMillis ()J
+	public final fun getValue ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class com/uqpay/sdk/auth/UQPayTokenProvider {
+	public abstract fun fetchToken ()Lcom/uqpay/sdk/auth/UQPayAuthToken;
+}
+
+public final class com/uqpay/sdk/error/UQPayError : android/os/Parcelable {
+	public static final field CREATOR Landroid/os/Parcelable$Creator;
+	public static final field Companion Lcom/uqpay/sdk/error/UQPayError$Companion;
+	public synthetic fun <init> (Landroid/os/Parcel;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lcom/uqpay/sdk/error/UQPayErrorCode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Lcom/uqpay/sdk/error/UQPayErrorCode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun describeContents ()I
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCode ()Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public final fun getDeclineCode ()Ljava/lang/String;
+	public final fun getMessage ()Ljava/lang/String;
+	public final fun getTraceId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+	public fun writeToParcel (Landroid/os/Parcel;I)V
+}
+
+public final class com/uqpay/sdk/error/UQPayError$Companion {
+}
+
+public final class com/uqpay/sdk/error/UQPayErrorCode {
+	public static final field AUTHENTICATION_FAILED Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field CANCELLED Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field CARD_DECLINED Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field Companion Lcom/uqpay/sdk/error/UQPayErrorCode$Companion;
+	public static final field INSUFFICIENT_FUNDS Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field INTENT_NOT_PAYABLE Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field INVALID_CONFIGURATION Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field INVALID_PAYMENT_METHOD Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field INVALID_REQUEST Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field NETWORK_ERROR Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field NOT_INITIALIZED Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field SERVER_ERROR Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field THREE_DS_FAILED Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field TIMEOUT Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public static final field UNKNOWN Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getRaw ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;)Lcom/uqpay/sdk/error/UQPayErrorCode;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/uqpay/sdk/error/UQPayErrorCode$Companion {
+	public final fun of (Ljava/lang/String;)Lcom/uqpay/sdk/error/UQPayErrorCode;
+}
+
+public abstract interface class com/uqpay/sdk/payment/PaymentCallback {
+	public abstract fun onResult (Lcom/uqpay/sdk/payment/PaymentResult;)V
+}
+
+public final class com/uqpay/sdk/payment/PaymentMethodType {
+	public static final field ALIPAY_CN Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field ALIPAY_HK Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field CARD Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field Companion Lcom/uqpay/sdk/payment/PaymentMethodType$Companion;
+	public static final field DANA Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field GCASH Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field GRABPAY Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field KAKAOPAY Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field NAVERPAY Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field PAYNOW Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field TNG Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field TOSSPAY Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field TRUEMONEY Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field UNIONPAY Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public static final field WECHAT_PAY Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getRaw ()Ljava/lang/String;
+	public fun hashCode ()I
+	public static final fun of (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/uqpay/sdk/payment/PaymentMethodType$Companion {
+	public final fun of (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentMethodType;
+}
+
+public final class com/uqpay/sdk/payment/PaymentResult : android/os/Parcelable {
+	public static final field CREATOR Landroid/os/Parcelable$Creator;
+	public static final field Companion Lcom/uqpay/sdk/payment/PaymentResult$Companion;
+	public synthetic fun <init> (Landroid/os/Parcel;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lcom/uqpay/sdk/payment/PaymentStatus;Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentMethodType;Ljava/math/BigDecimal;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lcom/uqpay/sdk/error/UQPayError;)V
+	public synthetic fun <init> (Lcom/uqpay/sdk/payment/PaymentStatus;Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentMethodType;Ljava/math/BigDecimal;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Lcom/uqpay/sdk/error/UQPayError;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun describeContents ()I
+	public final fun getAmount ()Ljava/math/BigDecimal;
+	public final fun getCompletedAtEpochMillis ()Ljava/lang/Long;
+	public final fun getCurrency ()Ljava/lang/String;
+	public final fun getError ()Lcom/uqpay/sdk/error/UQPayError;
+	public final fun getMerchantOrderId ()Ljava/lang/String;
+	public final fun getPaymentIntentId ()Ljava/lang/String;
+	public final fun getPaymentMethodType ()Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public final fun getStatus ()Lcom/uqpay/sdk/payment/PaymentStatus;
+	public final fun getTransactionId ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+	public fun writeToParcel (Landroid/os/Parcel;I)V
+}
+
+public final class com/uqpay/sdk/payment/PaymentResult$Companion {
+}
+
+public final class com/uqpay/sdk/payment/PaymentSessionParams : android/os/Parcelable {
+	public static final field CREATOR Landroid/os/Parcelable$Creator;
+	public static final field Companion Lcom/uqpay/sdk/payment/PaymentSessionParams$Companion;
+	public synthetic fun <init> (Landroid/os/Parcel;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun describeContents ()I
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getPaymentIntentId ()Ljava/lang/String;
+	public final fun getPresentation ()Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+	public fun writeToParcel (Landroid/os/Parcel;I)V
+}
+
+public final class com/uqpay/sdk/payment/PaymentSessionParams$Companion {
+}
+
+public abstract class com/uqpay/sdk/payment/PaymentSessionParams$Presentation {
+}
+
+public final class com/uqpay/sdk/payment/PaymentSessionParams$Presentation$CardOnly : com/uqpay/sdk/payment/PaymentSessionParams$Presentation {
+	public static final field INSTANCE Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation$CardOnly;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/uqpay/sdk/payment/PaymentSessionParams$Presentation$MethodList : com/uqpay/sdk/payment/PaymentSessionParams$Presentation {
+	public static final field INSTANCE Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation$MethodList;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/uqpay/sdk/payment/PaymentSessionParams$Presentation$SingleWallet : com/uqpay/sdk/payment/PaymentSessionParams$Presentation {
+	public fun <init> (Lcom/uqpay/sdk/payment/PaymentMethodType;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMethod ()Lcom/uqpay/sdk/payment/PaymentMethodType;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/uqpay/sdk/payment/PaymentStatus : java/lang/Enum {
+	public static final field CANCELLED Lcom/uqpay/sdk/payment/PaymentStatus;
+	public static final field FAILED Lcom/uqpay/sdk/payment/PaymentStatus;
+	public static final field PENDING Lcom/uqpay/sdk/payment/PaymentStatus;
+	public static final field SUCCEEDED Lcom/uqpay/sdk/payment/PaymentStatus;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentStatus;
+	public static fun values ()[Lcom/uqpay/sdk/payment/PaymentStatus;
+}
+
+public abstract interface class com/uqpay/sdk/payment/UQPayPaymentLauncher {
+	public abstract fun launch (Lcom/uqpay/sdk/payment/PaymentSessionParams;)V
+}
+

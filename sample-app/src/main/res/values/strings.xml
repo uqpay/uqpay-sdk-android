@@ -2,4 +2,13 @@
 <resources>
     <string name="app_name">UQPAY Sample</string>
     <string name="pay_button">Pay with UQPAY</string>
+    <string name="intent_id_hint">Payment intent id (PI…) from your backend</string>
+
+    <string name="status_idle">Create a payment intent on your backend, then paste its id above.</string>
+    <string name="status_need_intent_id">Enter a payment intent id first.</string>
+    <string name="status_starting">Starting payment…</string>
+    <string name="status_succeeded">Succeeded: %1$s\n\nAdvisory only — confirm with your backend before fulfilling.</string>
+    <string name="status_failed">Failed: %1$s\n\nTrace id: %2$s</string>
+    <string name="status_cancelled">Cancelled. Nothing was submitted.</string>
+    <string name="status_pending">Pending — the payment may still be live.\n\nDo not retry or release the order. Wait for the webhook.</string>
 </resources>

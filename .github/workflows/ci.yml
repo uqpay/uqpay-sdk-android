@@ -1,0 +1,108 @@
+name: CI
+
+# Runs on every push and PR. This must actually execute from the first week: the iOS
+# SDK had a CI workflow that had never once run, and every other guarantee in
+# docs/acceptance-criteria.md rests on it (§9.1).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build, test, and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # local.properties is gitignored (it holds SDK paths and sandbox keys), so the
+      # Android SDK location is supplied by the runner's environment instead.
+      # The public surface is a permanent compatibility commitment. This fails if it
+      # changed without `./gradlew apiDump` being run and the diff reviewed.
+      - name: Check the public API surface
+        run: ./gradlew apiCheck --stacktrace
+
+      - name: Run unit tests
+        run: ./gradlew :uqpay-sdk:testDebugUnitTest --stacktrace
+
+      - name: Build the SDK
+        run: ./gradlew :uqpay-sdk:assembleRelease --stacktrace
+
+      - name: Build the sample app
+        run: ./gradlew :sample-app:assembleDebug --stacktrace
+
+      - name: Lint
+        run: ./gradlew lint --stacktrace
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            uqpay-sdk/build/reports/tests/
+            uqpay-sdk/build/test-results/
+          if-no-files-found: ignore
+
+      - name: Upload lint results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-results
+          path: '**/build/reports/lint-results-*.html'
+          if-no-files-found: ignore
+
+  # A missing R8 keep rule in a payment SDK shows up as "the payment result is silently
+  # lost", in release builds only. Neither stripe-android nor airwallex-payment-android
+  # verifies this; we do. See uqpay-sdk/consumer-rules.pro.
+  minified:
+    name: Minified consumer build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble the sample app with R8 enabled
+        run: ./gradlew :sample-app:assembleRelease --stacktrace
+
+      - name: Verify the ActivityResultContract survived shrinking
+        run: |
+          set -euo pipefail
+          MAPPING=sample-app/build/outputs/mapping/release/mapping.txt
+          if [ ! -f "$MAPPING" ]; then
+            echo "No R8 mapping produced — minification did not run." >&2
+            exit 1
+          fi
+          if ! grep -q "UQPayPaymentContract" "$MAPPING"; then
+            echo "UQPayPaymentContract is absent from the R8 mapping." >&2
+            echo "The consumer keep rule is not being applied; payment results would be" >&2
+            echo "silently lost in release builds." >&2
+            exit 1
+          fi
+          echo "UQPayPaymentContract survived R8."

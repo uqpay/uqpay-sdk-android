@@ -152,9 +152,29 @@ class UQPayApiClientTest {
         client(network).confirmIntent("PI_1", confirmBody, idempotencyKey)
 
         val headers = network.requests.single().headers
-        assertEquals("tok-1", headers["x-auth-token"])
+        // `Bearer `-prefixed despite not being the Authorization header. The shipped iOS
+        // SDK does this at every call site; sending the raw token returns
+        // `401 unauthorized_error`, indistinguishable from an expired credential.
+        assertEquals("Bearer tok-1", headers["x-auth-token"])
         assertEquals("client-test", headers["x-client-id"])
         assertTrue(headers.getValue("User-Agent").startsWith("UQPay-Android-SDK/"))
+    }
+
+    @Test
+    fun `a token that already carries the Bearer prefix is not prefixed twice`() = runTest {
+        // The token comes from the merchant's backend; we cannot dictate its shape, and
+        // double-prefixing 401s with the same misleading message as no prefix at all.
+        val prefixing = CountingTokenProvider { "Bearer tok-1" }
+        val network = RecordingNetworkClient(response(200, intentJson))
+        val apiClient = UQPayApiClient(
+            configuration = UQPayConfiguration("client-test", Environment.SANDBOX, prefixing),
+            networkClient = network,
+            tokenManager = TokenManager(prefixing, UnconfinedTestDispatcher()),
+        )
+
+        apiClient.retrieveIntent("PI_1")
+
+        assertEquals("Bearer tok-1", network.requests.single().headers["x-auth-token"])
     }
 
     @Test
@@ -205,8 +225,8 @@ class UQPayApiClientTest {
 
         apiClient.retrieveIntent("PI_1")
 
-        assertEquals("tok-1", network.requests[0].headers["x-auth-token"])
-        assertEquals("tok-2", network.requests[1].headers["x-auth-token"])
+        assertEquals("Bearer tok-1", network.requests[0].headers["x-auth-token"])
+        assertEquals("Bearer tok-2", network.requests[1].headers["x-auth-token"])
     }
 
     @Test

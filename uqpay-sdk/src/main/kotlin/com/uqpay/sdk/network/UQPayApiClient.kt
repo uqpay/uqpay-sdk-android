@@ -79,7 +79,7 @@ internal class UQPayApiClient(
             method = request.method,
             url = request.url,
             headers = request.headers + mapOf(
-                "x-auth-token" to token,
+                "x-auth-token" to bearer(token),
                 "x-client-id" to configuration.clientId,
                 "User-Agent" to USER_AGENT,
             ),
@@ -125,5 +125,22 @@ internal class UQPayApiClient(
 
     private companion object {
         val USER_AGENT: String = "UQPay-Android-SDK/${BuildConfig.UQPAY_SDK_VERSION}"
+
+        const val BEARER_PREFIX = "Bearer "
+
+        /**
+         * `x-auth-token` carries a **`Bearer `-prefixed** token, despite not being the
+         * `Authorization` header. Verified against the shipped iOS SDK, which applies the
+         * prefix at all four of its call sites (`UqpayHTTPClient.swift:173`,
+         * `ApiClient+Payments.swift:43`, `UqpayPaymentSheet.swift:690`). Sending the raw
+         * token yields `401 unauthorized_error`, which reads exactly like an expired
+         * credential and sent us looking in the wrong place.
+         *
+         * Tolerates a provider that already prefixes: the token comes from the merchant's
+         * backend and we cannot dictate its shape. Double-prefixing would 401 with the
+         * same misleading message.
+         */
+        fun bearer(token: String): String =
+            if (token.startsWith(BEARER_PREFIX)) token else BEARER_PREFIX + token
     }
 }

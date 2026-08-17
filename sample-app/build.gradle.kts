@@ -17,6 +17,21 @@ val localProperties = Properties().apply {
 
 fun localProperty(name: String): String = localProperties.getProperty(name).orEmpty()
 
+// An x-api-key can issue refunds and payouts, and it is NEVER a valid access token —
+// pasting one into uqpay.sandboxToken produces a 401 that reads like an expired
+// credential, while quietly compiling the key into the sample APK via BuildConfig.
+// That happened once. Fail loudly rather than ship it again.
+//
+// Note uqpay.sandboxApiKey is deliberately NOT exposed as a buildConfigField: the app
+// has no use for it. Only scripts/mint-sandbox-token.sh reads it, outside the build.
+val sandboxToken = localProperty("uqpay.sandboxToken")
+val sandboxApiKey = localProperty("uqpay.sandboxApiKey")
+require(sandboxToken.isEmpty() || sandboxToken != sandboxApiKey) {
+    "uqpay.sandboxToken in local.properties holds your x-api-key, not an access token. " +
+        "The API key must never be compiled into an app. Run " +
+        "./scripts/mint-sandbox-token.sh to mint a real token."
+}
+
 android {
     namespace = "com.uqpay.sample"
     compileSdk = libs.versions.compileSdk.get().toInt()

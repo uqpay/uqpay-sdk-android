@@ -21,13 +21,23 @@ local.properties
 secrets.*
 *.secret
 
-# First-party docs ARE part of the deliverable (acceptance-criteria §12, and CLAUDE.md
-# requires api-reference.md to change alongside any public API change). Re-included here
-# because ~/.gitignore_global ignores `docs/` machine-wide.
-!docs/
+# docs/ is not tracked. It holds internal working notes (progress, planning, research
+# specs, audit reports) alongside the reference-SDK clones, and is treated as local
+# working material rather than repository content. Kept on disk, never committed.
+#
+# Listed explicitly rather than relying on ~/.gitignore_global ignoring `docs/`
+# machine-wide, so the rule travels with the repo.
+#
+# NOTE: acceptance-criteria.md §12 lists the integration guide, API reference, error
+# codes, and troubleshooting docs as release deliverables, and CLAUDE.md requires
+# api-reference.md to change alongside any public API change. Both now depend on a
+# process outside this repository.
+docs/
 
-# Third-party reference SDK clones — study only, never committed (see docs/reference-sdks/README.md)
-docs/reference-sdks/
+# Agent/assistant instructions — local working material, not repository content.
+# Already covered by ~/.gitignore_global, repeated here so the rule travels with the repo.
+CLAUDE.md
+.claude/
 
 # OS
 .DS_Store

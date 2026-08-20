@@ -1,11 +1,8 @@
 package com.uqpay.sample
 
 import android.app.Application
-import com.uqpay.sdk.Environment
 import com.uqpay.sdk.UQPay
 import com.uqpay.sdk.UQPayConfiguration
-import com.uqpay.sdk.auth.UQPayAuthToken
-import com.uqpay.sdk.auth.UQPayTokenProvider
 
 /**
  * Mirrors what a merchant app does: initialize the SDK once, at startup.
@@ -22,46 +19,21 @@ class SampleApplication : Application() {
             context = this,
             configuration = UQPayConfiguration(
                 clientId = BuildConfig.UQPAY_CLIENT_ID,
-                environment = Environment.SANDBOX,
-                tokenProvider = SampleTokenProvider(),
+                environment = DemoMerchantBackend.environment,
+                // In a real app this calls **your own backend**, over your own
+                // authenticated channel, and returns whatever token that backend is
+                // currently caching. Here it is the demo stand-in — see the file header on
+                // DemoMerchantBackend.kt for why that file must not be copied into
+                // production.
+                //
+                // The SDK calls it on a background thread, on first use and again whenever
+                // the token it holds is near expiry or has been rejected.
+                tokenProvider = DemoMerchantBackend,
+                // Off in a shipped app. On here because this *is* the integration-debugging
+                // build, and the SDK's degraded paths are silent otherwise. It never logs a
+                // request or response body, in any environment.
+                loggingEnabled = BuildConfig.DEBUG,
             ),
         )
-    }
-}
-
-/**
- * Stands in for a real merchant token provider.
- *
- * A production app calls **its own backend** here, over its own authenticated channel,
- * and returns whatever token that backend is currently caching. This sample just reads a
- * token pasted into `local.properties`, because it has no backend.
- *
- * Two rules a real implementation must follow:
- *
- * 1. The merchant's `x-api-key` never reaches the app — it can issue refunds and payouts.
- * 2. The backend mints **one** token and shares it. UQPAY allows a single active token
- *    per merchant, so minting one per checkout invalidates the token every other
- *    customer's device is holding, and the backend's own.
- *
- * Called off the main thread, so blocking here is fine.
- */
-private class SampleTokenProvider : UQPayTokenProvider {
-
-    override fun fetchToken(): UQPayAuthToken {
-        val token = BuildConfig.UQPAY_SANDBOX_TOKEN
-        check(token.isNotBlank()) {
-            "No sandbox token. Add uqpay.sandboxToken=<token> to local.properties. " +
-                "A real app fetches this from its own backend instead."
-        }
-        // UQPAY access tokens last about 30 minutes. A real provider returns the expiry
-        // its backend reports; this sample assumes the full window from now.
-        return UQPayAuthToken(
-            value = token,
-            expiresAtEpochMillis = System.currentTimeMillis() + THIRTY_MINUTES_MILLIS,
-        )
-    }
-
-    private companion object {
-        const val THIRTY_MINUTES_MILLIS = 30 * 60 * 1000L
     }
 }

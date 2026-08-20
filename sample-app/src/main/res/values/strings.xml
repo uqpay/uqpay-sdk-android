@@ -1,14 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">UQPAY Sample</string>
-    <string name="pay_button">Pay with UQPAY</string>
-    <string name="intent_id_hint">Payment intent id (PI…) from your backend</string>
+    <string name="cart_title">My Cart</string>
 
-    <string name="status_idle">Create a payment intent on your backend, then paste its id above.</string>
-    <string name="status_need_intent_id">Enter a payment intent id first.</string>
-    <string name="status_starting">Starting payment…</string>
-    <string name="status_succeeded">Succeeded: %1$s\n\nAdvisory only — confirm with your backend before fulfilling.</string>
-    <string name="status_failed">Failed: %1$s\n\nTrace id: %2$s</string>
+    <string name="section_items">Items</string>
+    <string name="section_shipping">Shipping</string>
+    <string name="section_billing">Billing</string>
+
+    <string name="price_subtotal">Subtotal</string>
+    <string name="price_delivery">Delivery fee</string>
+    <string name="price_discount">Discount</string>
+    <string name="price_total">Total</string>
+    <!-- A money amount. The cart holds it as a BigDecimal; only the symbol lives here. -->
+    <string name="price_amount">S$%1$s</string>
+    <!-- Recipient and phone on one line: "John Tan · +65 9123 4567". -->
+    <string name="shipping_line">%1$s \u00B7 %2$s</string>
+
+    <string name="billing_note">Your saved billing details are sent to the payment sheet, so only the card number, expiry and security code need typing. Everything stays editable.</string>
+
+    <string name="checkout_button">Checkout</string>
+    <string name="checkout_working">Creating your order…</string>
+
+    <string name="status_starting">Opening the payment sheet…</string>
+    <string name="status_succeeded">Succeeded — %1$s\n\nAdvisory only. Confirm with your backend, which knows the webhook outcome, before fulfilling anything.</string>
+    <string name="status_failed">Failed: %1$s\n\nNothing was charged. The customer can try again.</string>
     <string name="status_cancelled">Cancelled. Nothing was submitted.</string>
-    <string name="status_pending">Pending — the payment may still be live.\n\nDo not retry or release the order. Wait for the webhook.</string>
+    <string name="status_pending">Pending — the payment may still be live.\n\nDo not retry it, do not refund it, and do not release the order. Wait for the webhook.</string>
+    <string name="status_checkout_failed">Could not start the payment.\n\n%1$s</string>
 </resources>

@@ -3,7 +3,8 @@ package com.uqpay.sdk.network
 import android.util.Log
 
 /**
- * Internal diagnostics. **Off by default** and never enabled in production builds.
+ * Internal diagnostics. **Off by default**; a merchant opts in with
+ * `UQPayConfiguration(loggingEnabled = true)`, and [Noop] is what every other build gets.
  *
  * Hard rule: this logger never receives a request or response body, in any environment.
  * Airwallex's SDK logs full bodies — PAN included — whenever `environment != PRODUCTION`,
@@ -23,7 +24,16 @@ internal interface UQPayLogger {
         override fun error(message: String, t: Throwable?): Unit = Unit
     }
 
-    /** Opt-in, for integration debugging in sandbox only. */
+    /**
+     * The opt-in implementation, selected by `UQPayConfiguration.loggingEnabled` and
+     * constructed in exactly one place — `PaymentSession.build`.
+     *
+     * This exists because the SDK's degradations are all "log and continue": an unwritable
+     * pin store, a discarded pin blob, a superseded confirm, an exhausted poll budget. With
+     * only [Noop] in the graph those lines went nowhere, and a merchant reporting "it
+     * sometimes just says pending" had nothing to send us. See the interface KDoc for the
+     * hard rule on what may be passed here — no bodies, ever, in any environment.
+     */
     class Logcat(private val tag: String = "UQPay") : UQPayLogger {
         override fun debug(message: String) {
             Log.d(tag, message)

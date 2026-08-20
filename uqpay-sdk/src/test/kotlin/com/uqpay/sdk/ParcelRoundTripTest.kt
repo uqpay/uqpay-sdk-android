@@ -150,4 +150,134 @@ class ParcelRoundTripTest {
             wallet.presentation,
         )
     }
+
+    // ---- billing prefill ---------------------------------------------------------------
+
+    /**
+     * The prefill crosses the same process boundary as everything else, and a form that
+     * came back half-seeded after process death would be worse than one that came back
+     * empty — the customer would trust fields the merchant no longer stands behind. Every
+     * one of the ten is asserted individually.
+     *
+     * No real person's details appear here.
+     */
+    @Test
+    fun `billing details survive with every field populated`() {
+        val original = PaymentSessionParams.BillingDetails(
+            firstName = "John",
+            lastName = "Tan",
+            email = "john.tan@example.com",
+            phone = "+6591234567",
+            addressLine1 = "123 Orchard Road",
+            addressLine2 = "#12-01",
+            city = "Singapore",
+            state = "Singapore",
+            postalCode = "238888",
+            countryCode = "SG",
+        )
+
+        val restored = roundTrip(original, PaymentSessionParams.BillingDetails.CREATOR)
+
+        assertEquals("John", restored.firstName)
+        assertEquals("Tan", restored.lastName)
+        assertEquals("john.tan@example.com", restored.email)
+        assertEquals("+6591234567", restored.phone)
+        assertEquals("123 Orchard Road", restored.addressLine1)
+        assertEquals("#12-01", restored.addressLine2)
+        assertEquals("Singapore", restored.city)
+        assertEquals("Singapore", restored.state)
+        assertEquals("238888", restored.postalCode)
+        assertEquals("SG", restored.countryCode)
+        assertEquals(original, restored)
+    }
+
+    /**
+     * Absent must come back absent, not `""`. The two are different on the wire — see
+     * `ConfirmPayload.ABSENT_FIELD` — and a parcel that turned one into the other would
+     * change the confirm body under an already-pinned idempotency key.
+     */
+    @Test
+    fun `billing details survive with nothing populated at all`() {
+        val restored = roundTrip(
+            PaymentSessionParams.BillingDetails(),
+            PaymentSessionParams.BillingDetails.CREATOR,
+        )
+
+        assertNull(restored.firstName)
+        assertNull(restored.lastName)
+        assertNull(restored.email)
+        assertNull(restored.phone)
+        assertNull(restored.addressLine1)
+        assertNull(restored.addressLine2)
+        assertNull(restored.city)
+        assertNull(restored.state)
+        assertNull(restored.postalCode)
+        assertNull(restored.countryCode)
+    }
+
+    /** A partial prefill must not shift the fields that follow it. */
+    @Test
+    fun `a partly populated prefill keeps each value on its own field`() {
+        val restored = roundTrip(
+            PaymentSessionParams.BillingDetails(
+                firstName = "John",
+                city = "Singapore",
+                countryCode = "SG",
+            ),
+            PaymentSessionParams.BillingDetails.CREATOR,
+        )
+
+        assertEquals("John", restored.firstName)
+        assertNull(restored.lastName)
+        assertNull(restored.email)
+        assertNull(restored.phone)
+        assertEquals("Singapore", restored.city)
+        assertNull(restored.state)
+        assertNull(restored.postalCode)
+        assertEquals("SG", restored.countryCode)
+    }
+
+    @Test
+    fun `session params carry the prefill across the boundary, and its absence too`() {
+        val prefill = PaymentSessionParams.BillingDetails(
+            firstName = "John",
+            email = "john.tan@example.com",
+            countryCode = "SG",
+        )
+
+        val withPrefill = roundTrip(
+            PaymentSessionParams("PI_7", billingDetails = prefill),
+            PaymentSessionParams.CREATOR,
+        )
+        assertEquals(prefill, withPrefill.billingDetails)
+        assertEquals("PI_7", withPrefill.paymentIntentId)
+        assertEquals(PaymentSessionParams.Presentation.MethodList, withPrefill.presentation)
+
+        val without = roundTrip(PaymentSessionParams("PI_8"), PaymentSessionParams.CREATOR)
+        assertNull("a launch with no prefill must not invent one", without.billingDetails)
+    }
+
+    /**
+     * The prefill is written after the presentation, and `SingleWallet` writes an extra
+     * string of its own. Reading them back out of order would silently hand the wallet's
+     * name to the form as a first name — so every presentation is checked with a prefill
+     * attached, not only the default one.
+     */
+    @Test
+    fun `the prefill reads back correctly behind every presentation`() {
+        val prefill = PaymentSessionParams.BillingDetails(firstName = "John", countryCode = "SG")
+
+        for (presentation in listOf(
+            PaymentSessionParams.Presentation.MethodList,
+            PaymentSessionParams.Presentation.CardOnly,
+            PaymentSessionParams.Presentation.SingleWallet(PaymentMethodType.GRABPAY),
+        )) {
+            val restored = roundTrip(
+                PaymentSessionParams("PI_9", presentation, prefill),
+                PaymentSessionParams.CREATOR,
+            )
+            assertEquals(presentation, restored.presentation)
+            assertEquals("behind $presentation", prefill, restored.billingDetails)
+        }
+    }
 }

@@ -16,8 +16,11 @@ public final class com/uqpay/sdk/UQPay {
 
 public final class com/uqpay/sdk/UQPayConfiguration {
 	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/Environment;Lcom/uqpay/sdk/auth/UQPayTokenProvider;)V
+	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/Environment;Lcom/uqpay/sdk/auth/UQPayTokenProvider;Z)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/Environment;Lcom/uqpay/sdk/auth/UQPayTokenProvider;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getClientId ()Ljava/lang/String;
 	public final fun getEnvironment ()Lcom/uqpay/sdk/Environment;
+	public final fun getLoggingEnabled ()Z
 	public final fun getTokenProvider ()Lcom/uqpay/sdk/auth/UQPayTokenProvider;
 	public fun toString ()Ljava/lang/String;
 }
@@ -142,14 +145,52 @@ public final class com/uqpay/sdk/payment/PaymentSessionParams : android/os/Parce
 	public synthetic fun <init> (Landroid/os/Parcel;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun <init> (Ljava/lang/String;)V
 	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;)V
-	public synthetic fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun describeContents ()I
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBillingDetails ()Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails;
 	public final fun getPaymentIntentId ()Ljava/lang/String;
 	public final fun getPresentation ()Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 	public fun writeToParcel (Landroid/os/Parcel;I)V
+}
+
+public final class com/uqpay/sdk/payment/PaymentSessionParams$BillingDetails : android/os/Parcelable {
+	public static final field CREATOR Landroid/os/Parcelable$Creator;
+	public static final field Companion Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Companion;
+	public fun <init> ()V
+	public synthetic fun <init> (Landroid/os/Parcel;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun describeContents ()I
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAddressLine1 ()Ljava/lang/String;
+	public final fun getAddressLine2 ()Ljava/lang/String;
+	public final fun getCity ()Ljava/lang/String;
+	public final fun getCountryCode ()Ljava/lang/String;
+	public final fun getEmail ()Ljava/lang/String;
+	public final fun getFirstName ()Ljava/lang/String;
+	public final fun getLastName ()Ljava/lang/String;
+	public final fun getPhone ()Ljava/lang/String;
+	public final fun getPostalCode ()Ljava/lang/String;
+	public final fun getState ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+	public fun writeToParcel (Landroid/os/Parcel;I)V
+}
+
+public final class com/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Companion {
 }
 
 public final class com/uqpay/sdk/payment/PaymentSessionParams$Companion {

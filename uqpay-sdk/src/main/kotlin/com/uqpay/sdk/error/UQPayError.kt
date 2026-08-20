@@ -14,8 +14,18 @@ import android.os.Parcelable
  * @property code stable identifier — branch on this, not on [message].
  * @property message safe-to-log description of what went wrong.
  * @property declineCode the acquirer's raw decline reason, when one was supplied.
- * @property traceId the gateway's request/trace id. Quote this in support tickets; it
- *   contains no sensitive data.
+ * @property traceId the gateway's request/trace id, when it returns one — read from
+ *   `x-request-id`, `request-id` or `x-b3-traceid`. It contains no sensitive data.
+ *
+ *   **Today this is always null.** The UQPAY gateway emits none of those headers: three
+ *   live sandbox captures found no correlation header, and the shipped iOS SDK reads none
+ *   across 87 source files. The field is retained rather than removed so that adding the
+ *   header server-side needs no SDK API change — but nothing in this SDK, and nothing in a
+ *   merchant's support flow, may depend on it being populated. Quote [PaymentResult]'s
+ *   `paymentIntentId` and `transactionId` instead.
+ *
+ *   Open item **F8**: keep-or-remove needs sign-off with the UQPAY platform team before
+ *   1.0 freezes the surface. See `docs/api-reference.md`.
  */
 public class UQPayError(
     public val code: UQPayErrorCode,

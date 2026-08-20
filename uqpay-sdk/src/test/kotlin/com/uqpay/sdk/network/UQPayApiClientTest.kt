@@ -60,16 +60,20 @@ class UQPayApiClientTest {
     private fun response(status: Int, body: String?, traceId: String? = "trace-1") =
         UQPayResponse(status, body, traceId, null)
 
+    // Wire keys copied from a real sandbox response on 2026-08-17, not invented. This
+    // fixture previously used "id" for both the intent and the attempt; the gateway uses
+    // neither name, so both fields decoded to null and every assertion about them passed
+    // vacuously. Do not "tidy" these key names.
     private val intentJson = """
         {
-          "id": "PI_1",
+          "payment_intent_id": "PI_1",
           "intent_status": "REQUIRES_CUSTOMER_ACTION",
           "amount": "8.98",
           "currency": "SGD",
           "merchant_order_id": "order-77",
           "available_payment_method_types": ["card", "alipaycn"],
           "latest_payment_attempt": {
-            "id": "PA_1",
+            "attempt_id": "PA_1",
             "attempt_status": "AUTHENTICATION_REDIRECTED",
             "failure_code": "",
             "failure_message": ""
@@ -92,12 +96,12 @@ class UQPayApiClientTest {
 
         val dto = client(network).retrieveIntent("PI_1")
 
-        assertEquals("PI_1", dto.id)
+        assertEquals("PI_1", dto.paymentIntentId)
         assertEquals("REQUIRES_CUSTOMER_ACTION", dto.intentStatus)
         assertEquals("8.98", dto.amount)
         assertEquals("order-77", dto.merchantOrderId)
         assertEquals(listOf("card", "alipaycn"), dto.availablePaymentMethodTypes)
-        assertEquals("PA_1", dto.latestPaymentAttempt?.id)
+        assertEquals("PA_1", dto.latestPaymentAttempt?.attemptId)
         assertEquals("https://3ds.example/x", dto.nextAction?.redirectToUrl?.url)
     }
 
@@ -208,7 +212,7 @@ class UQPayApiClientTest {
 
         val dto = client(network).retrieveIntent("PI_1")
 
-        assertEquals("PI_1", dto.id)
+        assertEquals("PI_1", dto.paymentIntentId)
         assertEquals(2, network.requests.size)
     }
 

@@ -59,11 +59,64 @@ class UQPayPaymentContractTest {
         assertEquals("PA_7", parsed.transactionId)
     }
 
+    /**
+     * The single documented blank-id case (F3): `RESULT_CANCELED` with no data Intent is
+     * what the Activity produces only for garbled launch args, where there is no id to
+     * report. It degrades to a cancellation rather than a crash.
+     */
     @Test
-    fun `a null intent is reported, never thrown`() {
+    fun `a null intent is reported, never thrown - the one garbled-args exit`() {
         val parsed = contract.parseResult(Activity.RESULT_CANCELED, null)
 
         assertEquals(PaymentStatus.CANCELLED, parsed.status)
+        assertEquals("", parsed.paymentIntentId)
+    }
+
+    // ---- F3: no exit path other than garbled args may lose the intent id ---------------
+
+    /**
+     * Every shape the Activity's `finishWith` can hand back — a full result, a result
+     * whose parcel could not be read, a result Intent with only the id — resolves to the
+     * intent id the launch named. The Activity's own tests cover the exit *paths*; this
+     * covers the *shapes* those paths produce at the contract.
+     */
+    @Test
+    fun `F3 - every result shape carrying EXTRA_INTENT_ID resolves to a non-blank id`() {
+        val id = "PI_f3"
+        val shapes = listOf(
+            "full result" to Intent()
+                .putExtra(UQPayPaymentContract.EXTRA_RESULT, PaymentResult(PaymentStatus.CANCELLED, id))
+                .putExtra(UQPayPaymentContract.EXTRA_INTENT_ID, id),
+            "id only, RESULT_OK" to Intent().putExtra(UQPayPaymentContract.EXTRA_INTENT_ID, id),
+            "garbled result parcel, id present" to Intent()
+                .putExtra(UQPayPaymentContract.EXTRA_RESULT, "not-a-parcelable")
+                .putExtra(UQPayPaymentContract.EXTRA_INTENT_ID, id),
+        )
+        for ((name, data) in shapes) {
+            for (code in listOf(Activity.RESULT_OK, Activity.RESULT_CANCELED)) {
+                val parsed = contract.parseResult(code, data)
+                assertEquals("$name / $code lost the intent id", id, parsed.paymentIntentId)
+            }
+        }
+    }
+
+    /**
+     * The id extra is authoritative even when the parcelled result disagrees: the Activity
+     * stamps it from the launch params, so a future result object with a blank id can
+     * never make a merchant lose the payment. (The parcelled result wins when readable —
+     * this test pins that a *blank* result id is not silently upgraded either, so the
+     * behaviour is explicit: readable result → its id; unreadable → the extra.)
+     */
+    @Test
+    fun `a readable result is returned as delivered - the id extra is the fallback, not an override`() {
+        val data = Intent()
+            .putExtra(UQPayPaymentContract.EXTRA_RESULT, PaymentResult(PaymentStatus.SUCCEEDED, "PI_result"))
+            .putExtra(UQPayPaymentContract.EXTRA_INTENT_ID, "PI_result")
+
+        val parsed = contract.parseResult(Activity.RESULT_OK, data)
+
+        assertEquals(PaymentStatus.SUCCEEDED, parsed.status)
+        assertEquals("PI_result", parsed.paymentIntentId)
     }
 
     @Test

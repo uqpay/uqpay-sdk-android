@@ -5,6 +5,11 @@ import com.uqpay.sdk.UQPayConfiguration
 import com.uqpay.sdk.auth.UQPayAuthToken
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import com.uqpay.sdk.error.UQPayErrorCode
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
@@ -91,6 +96,7 @@ class SandboxSmokeTest {
 
         outcome.onSuccess {
             report("UNEXPECTED: the gateway returned 200 for an unknown intent id.")
+            fail("the gateway returned 200 for an intent id that does not exist")
         }.onFailure { t ->
             val api = t as? UQPayApiException
             val mapped = mapper.map(t)
@@ -102,6 +108,14 @@ class SandboxSmokeTest {
             report("mapped code:      ${mapped.code}")
             report("outcome unknown:  ${api?.isOutcomeUnknown}")
             report("retryable:        ${api?.isRetryable}")
+
+            // The report is how the live result is read; these are what it must mean.
+            assertNotEquals("auth model or a header name is wrong", UQPayErrorCode.AUTHENTICATION_FAILED, mapped.code)
+            assertNotEquals("base URL wrong or host unreachable", UQPayErrorCode.NETWORK_ERROR, mapped.code)
+            assertTrue(
+                "expected INVALID_REQUEST or INTENT_NOT_PAYABLE for an unknown intent, got ${mapped.code}",
+                mapped.code == UQPayErrorCode.INVALID_REQUEST || mapped.code == UQPayErrorCode.INTENT_NOT_PAYABLE,
+            )
         }
     }
 
@@ -125,9 +139,10 @@ class SandboxSmokeTest {
         outcome.onFailure { t ->
             val api = t as? UQPayApiException
             report("FAILED: ${t::class.simpleName} http=${api?.statusCode} code=${api?.apiError?.code}")
+            fail("retrieveIntent threw ${t::class.simpleName} (http=${api?.statusCode}, code=${api?.apiError?.code})")
         }.onSuccess { dto ->
             report("decoded:              true")
-            report("id present:           ${!dto.id.isNullOrBlank()}")
+            report("id present:           ${!dto.paymentIntentId.isNullOrBlank()}")
             report("raw intent_status:    ${dto.intentStatus}")
             report("parsed status:        ${IntentStatus.from(dto.intentStatus)}")
             report("status recognised:    ${IntentStatus.from(dto.intentStatus) !is IntentStatus.Unknown}")
@@ -142,6 +157,12 @@ class SandboxSmokeTest {
                 report("  failure_code blank: ${a.failureCode?.isBlank()}")
             }
             report("next_action type:     ${dto.nextAction?.type}")
+
+            assertFalse("payment_intent_id must decode non-blank", dto.paymentIntentId.isNullOrBlank())
+            assertFalse(
+                "intent_status must be one this SDK recognises",
+                IntentStatus.from(dto.intentStatus) is IntentStatus.Unknown,
+            )
         }
     }
 }

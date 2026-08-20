@@ -205,6 +205,31 @@ class ErrorMapperTest {
         assertNull(mapped.traceId)
     }
 
+    /**
+     * An arbitrary throwable's message is **never** the server detail. A `RuntimeException`
+     * raised deep in the stack can quote whatever it was handling — a request body with a
+     * card number in it — and the sandbox message path appends any detail it is given. The
+     * detail must be null here (audit ac-audit-slice-2 M-1: passing `t.message` survived
+     * every other test).
+     */
+    @Test
+    fun `an arbitrary throwable's message never reaches the merchant, in either environment`() {
+        // Test PAN 4111 1111 1111 1111 (documented test value, not a real card).
+        val leaky = RuntimeException("body {\"number\":\"4111111111111111\"} rejected")
+        val fixedUnknownCopy = "The payment could not be completed."
+
+        val inSandbox = sandbox.map(leaky as Throwable)
+        assertEquals(UQPayErrorCode.UNKNOWN, inSandbox.code)
+        assertEquals(fixedUnknownCopy, inSandbox.message)
+        assertFalse(inSandbox.message.contains("4111"))
+        assertFalse(inSandbox.message.contains("rejected"))
+
+        val inProduction = production.map(leaky as Throwable)
+        assertEquals(UQPayErrorCode.UNKNOWN, inProduction.code)
+        assertEquals(fixedUnknownCopy, inProduction.message)
+        assertFalse(inProduction.message.contains("4111"))
+    }
+
     @Test
     fun `a UQPayApiException passed as a throwable takes the typed path`() {
         val mapped = production.map(apiError("card_declined") as Throwable)

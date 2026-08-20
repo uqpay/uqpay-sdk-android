@@ -8,9 +8,23 @@
           Internal payment Activity — launched only via UQPay.createPaymentLauncher.
           Never exported. singleTop so a re-launch reuses the running instance instead of
           stacking a second live payment.
+
+          configChanges is deliberately narrow and is belt-and-braces, not the fix for B1.
+          Handling rotation here keeps the 3-D Secure WebView itself alive, so the issuer's
+          challenge page is not even re-fetched when the customer turns the phone — the best
+          outcome for someone half-way through typing an OTP. What makes rotation *safe* is
+          that the ACS session cookie is no longer deleted with the view (ThreeDsBrowsingState)
+          and that the engine is re-attached rather than rebuilt (PaymentSession.obtain); both
+          still hold for the config changes not listed here, for process death, and for a host
+          that calls recreate().
+
+          Only the four rotation/size qualifiers are claimed. uiMode, locale and fontScale are
+          NOT: the sheet must still be recreated for dark mode, a language change and a font
+          size change, because that is how it adapts to them.
         -->
         <activity
             android:name=".ui.UQPayPaymentActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="false"
             android:launchMode="singleTop"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />

@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Every customer-facing string of the payment UI. Nothing in Kotlin may hardcode UI text:
+  strings live here so they can be localised without touching code (English only in V1),
+  and so a reviewer can read the whole customer-visible vocabulary in one place.
+
+  Prefixed `uqpay_` because this is a library: resource names are merged into the host
+  app's namespace, and an unprefixed `cancel` would collide with (or be silently overridden
+  by) a merchant's own string of the same name.
+-->
+<resources>
+
+    <!-- Screen chrome -->
+    <string name="uqpay_title">Payment</string>
+    <string name="uqpay_cd_close">Close payment</string>
+    <string name="uqpay_amount_format">%1$s %2$s</string>
+    <string name="uqpay_order_format">Order %1$s</string>
+
+    <!-- Loading -->
+    <string name="uqpay_loading">Loading payment…</string>
+    <string name="uqpay_cd_loading">Loading payment</string>
+
+    <!-- Method list -->
+    <string name="uqpay_choose_method">Choose how to pay</string>
+    <string name="uqpay_no_methods">No payment methods are available for this payment.</string>
+    <string name="uqpay_cd_method_format">Pay with %1$s</string>
+
+    <!-- Method names. Keyed by the wire type; see PaymentMethodType. -->
+    <string name="uqpay_method_card">Card</string>
+    <string name="uqpay_method_wechatpay">WeChat Pay</string>
+    <string name="uqpay_method_alipaycn">Alipay</string>
+    <string name="uqpay_method_alipayhk">AlipayHK</string>
+    <string name="uqpay_method_grabpay">GrabPay</string>
+    <string name="uqpay_method_paynow">PayNow</string>
+    <string name="uqpay_method_unionpay">UnionPay</string>
+    <string name="uqpay_method_truemoney">TrueMoney</string>
+    <string name="uqpay_method_tng">Touch \'n Go</string>
+    <string name="uqpay_method_gcash">GCash</string>
+    <string name="uqpay_method_dana">DANA</string>
+    <string name="uqpay_method_kakaopay">Kakao Pay</string>
+    <string name="uqpay_method_tosspay">Toss Pay</string>
+    <string name="uqpay_method_naverpay">Naver Pay</string>
+
+    <!-- Card (placeholder until the card form lands in Slice 4) -->
+    <string name="uqpay_card_placeholder">Card payments are coming soon.</string>
+    <string name="uqpay_back_to_methods">Back to payment methods</string>
+    <string name="uqpay_cd_back_to_methods">Back to payment methods</string>
+
+    <!-- Confirming (§2c: back-press is blocked here, and the customer must see why) -->
+    <string name="uqpay_confirming">Processing your payment…</string>
+    <string name="uqpay_confirming_blocked">Confirming your payment. Please don\'t leave this screen.</string>
+    <string name="uqpay_confirming_blocked_hint">This usually takes a few seconds.</string>
+    <string name="uqpay_cd_confirming">Confirming your payment</string>
+
+    <!-- Waiting for the gateway with nothing for the customer to do -->
+    <string name="uqpay_polling">Waiting for confirmation…</string>
+    <string name="uqpay_cd_polling">Waiting for confirmation</string>
+
+    <!-- A next step this SDK version cannot yet show (Slices 4 and 5) -->
+    <string name="uqpay_action_pending_title">Almost there</string>
+    <string name="uqpay_action_qr">Scan the QR code to complete your payment.</string>
+    <string name="uqpay_action_redirect">Complete the verification step to continue.</string>
+    <string name="uqpay_action_bank_details">Complete the transfer to finish your payment.</string>
+    <string name="uqpay_action_unknown">Complete the payment in your banking or wallet app.</string>
+    <string name="uqpay_action_still_waiting">We\'ll update as soon as the payment is confirmed.</string>
+
+    <!-- Leaving while an attempt is in the air (M-3 / M-4: a visible way out) -->
+    <string name="uqpay_cancel">Cancel</string>
+    <string name="uqpay_cd_cancel">Cancel and leave this screen</string>
+
+    <!-- ==========================================================================
+         SLICE 5 — wallet QR + bank transfer. Appended as one block; Slice 4 appends
+         its own. Nothing above this line was changed.
+         ========================================================================== -->
+
+    <!-- Wallet QR -->
+    <string name="uqpay_wallet_qr_title">Pay with %1$s</string>
+    <string name="uqpay_wallet_qr_instruction">Scan this QR code with the %1$s app to pay.</string>
+    <string name="uqpay_cd_qr_image">Payment QR code. Scan it with your %1$s app.</string>
+    <string name="uqpay_qr_loading">Getting your QR code…</string>
+    <string name="uqpay_cd_qr_loading">Getting your QR code</string>
+    <string name="uqpay_qr_failed">We couldn\'t load the QR code.</string>
+    <string name="uqpay_qr_retry">Try again</string>
+    <string name="uqpay_cd_qr_retry">Try loading the QR code again</string>
+    <string name="uqpay_qr_payload_fallback">If your app accepts a payment code, you can use this one:</string>
+    <string name="uqpay_qr_expires_in">Expires in %1$s</string>
+    <string name="uqpay_qr_expired">This QR code has expired.</string>
+    <string name="uqpay_qr_expired_hint">Cancel and start again to get a new %1$s code.</string>
+
+    <string name="uqpay_method_wallet_generic">your wallet</string>
+
+    <!-- Bank transfer -->
+    <string name="uqpay_bank_title">Bank transfer</string>
+    <string name="uqpay_bank_instruction">Transfer the amount above to this account. Your payment is confirmed once the transfer arrives.</string>
+    <string name="uqpay_bank_name">Bank name</string>
+    <string name="uqpay_bank_account">Account number</string>
+    <string name="uqpay_bank_reference">Payment reference</string>
+    <string name="uqpay_bank_unavailable">We can\'t show the transfer details here. Please check your payment instructions with the merchant.</string>
+    <string name="uqpay_copy">Copy</string>
+    <string name="uqpay_cd_copy_format">Copy %1$s</string>
+
+    <!-- ==========================================================================
+         SLICE 4 — card entry + 3-D Secure. Appended as one block; nothing above
+         this line was changed.
+         ========================================================================== -->
+
+    <!-- Card form -->
+    <string name="uqpay_card_title">Card details</string>
+    <string name="uqpay_card_number">Card number</string>
+    <string name="uqpay_cd_card_number">Card number</string>
+    <string name="uqpay_card_expiry">Expiry (MM/YY)</string>
+    <string name="uqpay_cd_card_expiry">Card expiry date, month and year</string>
+    <string name="uqpay_card_cvc">Security code</string>
+    <string name="uqpay_cd_card_cvc">Card security code</string>
+    <string name="uqpay_card_billing">Billing details</string>
+    <string name="uqpay_card_first_name">First name</string>
+    <string name="uqpay_cd_card_first_name">Cardholder first name</string>
+    <string name="uqpay_card_last_name">Last name</string>
+    <string name="uqpay_cd_card_last_name">Cardholder last name</string>
+    <string name="uqpay_card_email">Email</string>
+    <string name="uqpay_cd_card_email">Billing email address</string>
+    <string name="uqpay_card_phone">Phone</string>
+    <string name="uqpay_cd_card_phone">Billing phone number</string>
+    <string name="uqpay_card_address1">Address line 1</string>
+    <string name="uqpay_cd_card_address1">Billing address line 1</string>
+    <string name="uqpay_card_address2">Address line 2</string>
+    <string name="uqpay_cd_card_address2">Billing address line 2</string>
+    <string name="uqpay_card_city">City</string>
+    <string name="uqpay_cd_card_city">Billing city</string>
+    <string name="uqpay_card_state">State or region</string>
+    <string name="uqpay_cd_card_state">Billing state or region</string>
+    <string name="uqpay_card_postcode">Postal code</string>
+    <string name="uqpay_cd_card_postcode">Billing postal code</string>
+    <string name="uqpay_card_pay">Pay</string>
+    <string name="uqpay_cd_card_pay">Pay with this card</string>
+
+    <!-- Billing country. Chosen from the full ISO list, never typed and never defaulted. -->
+    <string name="uqpay_card_country">Country or region</string>
+    <string name="uqpay_cd_card_country">Billing country or region</string>
+    <string name="uqpay_card_country_placeholder">Select your country or region</string>
+    <string name="uqpay_card_country_choose">Choose country or region</string>
+    <string name="uqpay_cd_card_country_choose">Choose your billing country or region</string>
+    <string name="uqpay_card_country_filter">Search</string>
+    <string name="uqpay_cd_card_country_filter">Search countries and regions</string>
+    <string name="uqpay_cd_card_country_row_format">Select %1$s</string>
+
+    <!-- Card brands, shown next to the number so the customer can see we read it right. -->
+    <string name="uqpay_brand_visa">Visa</string>
+    <string name="uqpay_brand_mastercard">Mastercard</string>
+    <string name="uqpay_brand_amex">Amex</string>
+    <string name="uqpay_brand_unionpay">UnionPay</string>
+    <string name="uqpay_brand_jcb">JCB</string>
+    <string name="uqpay_brand_discover">Discover</string>
+    <string name="uqpay_brand_diners">Diners Club</string>
+
+    <!-- Per-field validation messages. Say which field and what to do about it. -->
+    <string name="uqpay_card_error_required">This field is required.</string>
+    <string name="uqpay_card_error_number">That card number doesn\'t look right. Please check it and try again.</string>
+    <string name="uqpay_card_error_number_length">Please enter the full card number.</string>
+    <string name="uqpay_card_error_expiry">Enter the expiry date as MM/YY.</string>
+    <string name="uqpay_card_error_expiry_month">That month doesn\'t exist. Enter the month as 01 to 12.</string>
+    <string name="uqpay_card_error_expiry_past">That date has passed. Check the expiry printed on your card.</string>
+    <string name="uqpay_card_error_cvc">Check the security code on your card.</string>
+    <string name="uqpay_card_error_country">Please select your billing country or region.</string>
+
+    <!-- 3-D Secure. This screen never decides the outcome; the API always does. -->
+    <string name="uqpay_threeds_title">Verification</string>
+    <string name="uqpay_cd_threeds_web">Card verification page from your bank</string>
+    <string name="uqpay_cd_threeds_loading">Loading the verification page</string>
+    <string name="uqpay_threeds_verifying">Checking with your bank…</string>
+    <string name="uqpay_cd_threeds_verifying">Checking with your bank</string>
+    <string name="uqpay_threeds_interrupted">Verification was interrupted. Checking with your bank…</string>
+    <string name="uqpay_cd_threeds_interrupted">Verification was interrupted; checking with your bank</string>
+    <string name="uqpay_cd_threeds_cancel">Cancel verification and leave this screen</string>
+
+</resources>

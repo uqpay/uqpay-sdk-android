@@ -3,13 +3,17 @@ package com.uqpay.sdk.ui.card
 import androidx.compose.runtime.remember
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -265,11 +269,18 @@ class CardFormTest {
     // ---- the screen -----------------------------------------------------------------------
 
     @Test
-    fun `Pay is disabled until every field is valid, and enabled once they are`() {
+    fun `an incomplete form refuses to submit and says which field is wrong`() {
         var submitted: ConfirmPayload.Card? = null
         showForm(onSubmit = { submitted = it })
 
-        pay().assertIsNotEnabled()
+        // Pay is *enabled* on an invalid form, deliberately. Validation errors appear only
+        // after a submit attempt, so a button greyed out by validation is a dead end: the
+        // customer sees a form with no message anywhere and nothing to try. Tapping it
+        // submits nothing and reveals every field error at once.
+        pay().assertIsEnabled()
+        pay().performClick()
+        assertNull("an invalid form must not submit", submitted)
+        compose.onAllNodesWithText("This field is required.").onFirst().assertExists()
 
         type("Card number", pan)
         type("Card expiry date, month and year", "1230")
@@ -290,13 +301,59 @@ class CardFormTest {
     }
 
     @Test
-    fun `a Luhn-failing number keeps Pay disabled and says which field is wrong`() {
-        showForm()
+    fun `a Luhn-failing number refuses to submit and says which field is wrong`() {
+        var submitted: ConfirmPayload.Card? = null
+        showForm(onSubmit = { submitted = it })
         type("Card number", "5346930100108118")
         type("Card expiry date, month and year", "1230")
         type("Card security code", cvc)
         type("Cardholder first name", "Test")
-        pay().assertIsNotEnabled()
+
+        pay().performClick()
+
+        assertNull("a mistyped number must never reach the acquirer", submitted)
+        compose.onNodeWithText("That card number doesn't look right. Please check it and try again.")
+            .assertExists()
+    }
+
+    /**
+     * **The silent dead end (audit item 11).**
+     *
+     * The CVC field's length follows the brand — four digits on an Amex, three elsewhere — and
+     * it cannot apply that retroactively. Enter an Amex, type a four-digit code, then replace
+     * the number with a Visa: the CVC field holds four digits that Visa's rules cap at three.
+     * Every field looks filled, no error is drawn (they appear only after a submit attempt),
+     * and the Pay button used to be disabled by the very validation failure it would have
+     * explained. The form looked complete and was dead, with no way for the customer to find
+     * out why.
+     *
+     * The number's setter now re-truncates the code, so the state cannot hold a value the
+     * brand forbids however the number is changed — typed, pasted, autofilled or cleared.
+     */
+    @Test
+    fun `changing the brand re-truncates a security code the new brand cannot hold`() {
+        var submitted: ConfirmPayload.Card? = null
+        showForm(onSubmit = { submitted = it })
+
+        type("Card number", "340000000000009")
+        type("Card security code", "1234")
+        compose.onNodeWithText("1234").assertIsDisplayed()
+
+        // Retyped as a Visa. The four-digit code is now one digit too long for the brand.
+        compose.onNodeWithContentDescription("Card number").performTextClearance()
+        type("Card number", "4242424242424242")
+
+        compose.onNodeWithText("123").assertIsDisplayed()
+        compose.onAllNodesWithText("1234").assertCountEquals(0)
+
+        // And the form pays from there. What is left in the field is a complete Visa code,
+        // so the customer is not even asked to retype it — the state simply stopped holding
+        // a value the brand forbids.
+        type("Card expiry date, month and year", "1230")
+        type("Cardholder first name", "Test")
+        pay().performClick()
+        assertEquals("123", submitted?.cvc)
+        assertEquals("visa", submitted?.network)
     }
 
     @Test
@@ -616,8 +673,9 @@ class CardFormTest {
         var submitted: ConfirmPayload.Card? = null
         showForm(billingDetails = fullPrefill, onSubmit = { submitted = it })
 
-        // Pay is disabled until the card itself is present — a prefill is not a payment.
-        pay().assertIsNotEnabled()
+        // A prefill is not a payment: with no card typed, Pay submits nothing.
+        pay().performClick()
+        assertNull("a prefill alone must not submit", submitted)
 
         type("Card number", pan)
         type("Card expiry date, month and year", "1230")

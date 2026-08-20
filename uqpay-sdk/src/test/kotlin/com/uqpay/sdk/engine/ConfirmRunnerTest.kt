@@ -1,5 +1,6 @@
 package com.uqpay.sdk.engine
 
+import com.uqpay.sdk.testErrorCopy
 import com.uqpay.sdk.Environment
 import com.uqpay.sdk.error.UQPayErrorCode
 import com.uqpay.sdk.network.ApiErrorBody
@@ -29,6 +30,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -52,6 +55,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * No real card number, CVC, idempotency key or API key appears in this file.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
 class ConfirmRunnerTest {
 
     // ---- Fixtures --------------------------------------------------------------------
@@ -759,7 +763,7 @@ class ConfirmRunnerTest {
         environment: Environment = Environment.SANDBOX,
     ) = ConfirmRunner(
         idempotency = idempotency,
-        errorMapper = ErrorMapper(environment),
+        errorMapper = ErrorMapper(environment, testErrorCopy()),
         clock = clock,
     )
 

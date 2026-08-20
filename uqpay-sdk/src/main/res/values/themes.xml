@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The payment Activity's window theme.
+
+  Owned by this SDK rather than inherited from AppCompat. The Activity used to declare
+  `Theme.AppCompat.DayNight.NoActionBar`, which had two costs: it pulled androidx.appcompat
+  into every merchant app purely for a window theme, and its DayNight behaviour was decided
+  by the device alone — a host app that forces light mode still got a dark payment sheet on
+  a phone set to dark. Light and dark are now the merchant's decision, expressed through
+  `UQPayAppearance.colorMode`, and the sheet's own colours are drawn by Compose.
+
+  What is left for the window theme to do is the frame *before* Compose draws: the window
+  background. The night qualifier below keeps that frame close to the right colour on a
+  dark device with no configuration at all, and UQPayPaymentActivity paints the exact
+  configured background over it in onCreate — so an explicit LIGHT or DARK mode is honoured
+  from the very first frame rather than flashing the device's preference first.
+
+  windowNoTitle/windowActionBar are set explicitly as well as inheriting a NoActionBar
+  parent, because that pair is what actually suppresses the bar and inheriting it is easy
+  to lose when the parent is next changed.
+-->
+<resources>
+
+    <style name="Theme.UQPay.Payment" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+
+</resources>

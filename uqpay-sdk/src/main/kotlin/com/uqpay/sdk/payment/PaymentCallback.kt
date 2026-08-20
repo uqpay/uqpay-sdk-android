@@ -10,7 +10,12 @@ package com.uqpay.sdk.payment
  *
  * ### Contract
  *
- * - Invoked **exactly once** per payment, on the **main thread**.
+ * - Invoked **exactly once per `launch` call**, on the **main thread** — not once per
+ *   payment. Two launches for the *same* intent are one payment (one confirm, one
+ *   idempotency key) but two calls, so this is invoked twice with the same
+ *   [PaymentResult.paymentIntentId]. The commonest way to get there is a customer
+ *   double-tapping your Pay button. **Key your fulfilment on `paymentIntentId`**, so a
+ *   second delivery for an order you have already handled is a no-op.
  * - Delivered across configuration changes and process death.
  * - The result is **advisory**. The merchant's webhook is the authority on whether money
  *   moved; confirm server-side before fulfilling an order.

@@ -3,11 +3,13 @@ package com.uqpay.sdk.engine
 import com.uqpay.sdk.network.IntentStatus
 import com.uqpay.sdk.network.PaymentIntentDto
 import com.uqpay.sdk.network.UQPayApiClient
+import com.uqpay.sdk.network.UQPayApiException
 import com.uqpay.sdk.network.UQPayLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Where the intent being watched is read from.
@@ -79,17 +81,50 @@ internal fun interface EarlyReturnCheck {
  * lower bound on the wall-clock span of a poll that is never interrupted — it is not a
  * budget, and nothing in this file compares it to a clock reading.
  *
+ * ### The attempt ceiling is a bound on a *read*, not on the poll
+ *
+ * [attemptCeilingMillis] is the one wall-clock value in this file, and it is deliberately not
+ * a budget: it bounds how long a **single** `retrieve()` may take before it is abandoned and
+ * held as a failed read. Nothing about it can end a poll early — the attempt is spent either
+ * way and the loop continues — so the suspended-time property above is untouched.
+ *
+ * It exists because a read is not one request. Underneath it, `DefaultUQPayNetworkClient`
+ * retries a safe GET three times with 2s/4s/8s backoff, each retry carrying its own 30s
+ * connect and read timeouts, and each able to honour a `Retry-After`. One flaky read can
+ * therefore occupy a minute or more while spending a single attempt, and a `WalletQr` budget
+ * of 300 such attempts spans hours rather than the ten minutes it is sized for. The customer
+ * meanwhile sees a QR nobody appears to be watching. Bounding the read puts the poll's real
+ * duration back within sight of `maxAttempts × intervalMillis`.
+ *
  * @property maxAttempts reads inside the loop. Values below 1 are treated as 1: a
  *   pathological budget must still take one look at the payment rather than report an
  *   unresolved outcome having never asked.
  * @property intervalMillis spacing between attempts, and the wait before the guaranteed
  *   final fetch. Zero or negative means no wait.
+ * @property attemptCeilingMillis how long one read may take before it is abandoned and held
+ *   as a failure. Zero or negative means no ceiling. Defaults to [DEFAULT_ATTEMPT_CEILING_MILLIS].
  */
 internal data class PollBudget(
     val maxAttempts: Int,
     val intervalMillis: Long,
+    val attemptCeilingMillis: Long = DEFAULT_ATTEMPT_CEILING_MILLIS,
 ) {
     companion object {
+
+        /**
+         * The default bound on one read: 45 seconds.
+         *
+         * Sized to admit a slow-but-working read and to refuse a stuck one. A single request
+         * has a 30s connect and a 30s read timeout, so a first attempt that is merely slow
+         * still finishes inside this; what it cuts off is the *retry chain* underneath —
+         * three resends with backoff, or one honouring a long `Retry-After` — which is where
+         * a read stops being a read and becomes an outage nobody is timing.
+         *
+         * Abandoning a read costs nothing but one attempt: the intent is re-read on the next
+         * tick, and the abandoned attempt's held error is what the poller reports if the run
+         * ends unresolved.
+         */
+        const val DEFAULT_ATTEMPT_CEILING_MILLIS: Long = 45_000L
 
         /**
          * Card 3-D Secure: ~150 attempts, 2s apart.
@@ -384,7 +419,14 @@ internal class IntentPoller(
     private suspend fun readOnce(): Read {
         attemptsMade++
         return try {
-            Read.Succeeded(source.retrieve())
+            val intent = retrieveWithinCeiling()
+                ?: return Read.Failed(UQPayApiException.TimedOut()).also {
+                    logger.debug(
+                        "Poll attempt $attemptsMade exceeded its ${budget.attemptCeilingMillis}ms " +
+                            "ceiling; abandoning the read and holding it as a failure",
+                    )
+                }
+            Read.Succeeded(intent)
         } catch (cancellation: CancellationException) {
             // Never held. A cancelled poll reports nothing to anybody.
             throw cancellation
@@ -394,6 +436,22 @@ internal class IntentPoller(
             logger.debug("Poll attempt $attemptsMade failed (${error.javaClass.simpleName}); holding")
             Read.Failed(error)
         }
+    }
+
+    /**
+     * One `retrieve()`, abandoned if it outlasts [PollBudget.attemptCeilingMillis]. Null means
+     * it was abandoned; see the [PollBudget] KDoc for why a read needs a bound of its own.
+     *
+     * [withTimeoutOrNull] rather than `withTimeout`: the latter reports the expiry as a
+     * [kotlinx.coroutines.TimeoutCancellationException], which is a [CancellationException],
+     * and [readOnce]'s rule — correctly — is that a cancellation ends the whole poll and
+     * reports nothing. A read that ran long is not the customer walking away. Cancellation of
+     * the *caller* still propagates out of here, exactly as it must.
+     */
+    private suspend fun retrieveWithinCeiling(): PaymentIntentDto? {
+        val ceiling = budget.attemptCeilingMillis
+        if (ceiling <= 0L) return source.retrieve()
+        return withTimeoutOrNull(ceiling) { source.retrieve() }
     }
 
     /**

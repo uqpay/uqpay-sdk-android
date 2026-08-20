@@ -8,8 +8,8 @@ package com.uqpay.sdk.store
  * The registry that sits on top of this (`com.uqpay.sdk.engine.ConfirmIdempotency`) has
  * to keep working when storage does not, and "keeps working when storage does not" is a
  * behaviour, so it needs a test. The tests that matter are a store that returns garbage and
- * a store whose [save] throws — neither can be written against a concrete
- * `SharedPreferences`-backed class without corrupting a real file or mocking the framework.
+ * a store whose [save] throws — neither can be written against a concrete file-backed class
+ * without corrupting a real file or mocking the framework.
  * iOS reached the same conclusion and declared a protocol for exactly this reason; the
  * abstraction exists to make the disaster cases reachable, not for the sake of layering.
  *
@@ -40,7 +40,9 @@ package com.uqpay.sdk.store
  * Records are [PersistedConfirmAttempt]s and nothing else: a digest, an opaque key, coarse
  * device metrics and a timestamp. Nothing card-derived is representable — see
  * [ConfirmAttempt] for the long form of that argument — which is what allows the production
- * implementation to use plain app-private storage.
+ * implementation to use plain, unencrypted app-private storage. Where that storage lives is
+ * a separate decision and not a free one: see [NoBackupConfirmAttemptStore] for why it must
+ * be somewhere Android Auto Backup does not reach.
  *
  * Implementations may be called from any thread.
  */

@@ -1,21 +1,27 @@
 package com.uqpay.sdk.ui
 
 import android.content.Intent
+import android.content.res.Configuration
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import androidx.activity.ComponentActivity
 import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.annotation.VisibleForTesting
-import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.uqpay.sdk.engine.EngineState
 import com.uqpay.sdk.engine.PaymentSession
 import com.uqpay.sdk.engine.Presentation
+import com.uqpay.sdk.error.ErrorCopy
 import com.uqpay.sdk.error.UQPayError
 import com.uqpay.sdk.error.UQPayErrorCode
 import com.uqpay.sdk.launcher.UQPayPaymentContract
+import com.uqpay.sdk.UQPay
+import com.uqpay.sdk.appearance.UQPayAppearance
+import com.uqpay.sdk.payment.PaymentMethodType
 import com.uqpay.sdk.payment.PaymentResult
 import com.uqpay.sdk.payment.PaymentSessionParams
 import com.uqpay.sdk.payment.PaymentStatus
@@ -34,10 +40,16 @@ import kotlinx.coroutines.launch
  * decides everything about money — and no screen logic — the ViewModel decides what a
  * back-press means. That split is what makes each disaster case checkable in isolation.
  *
+ * It hosts exactly **the payment it was created for**, and one payment per instance: the
+ * session, the ViewModel, the delivery collector and [paymentIntentId] are all fixed at
+ * `onCreate`. A second launch is a second instance (see the manifest), and a second launch
+ * delivered to *this* instance is refused rather than adopted — see [onNewIntent].
+ *
  * ### Rotation re-attaches; it never re-submits
  *
  * `onCreate` calls [PaymentSession.obtain], which returns the *running* session for this
- * intent if there is one. A recreated Activity therefore finds the same engine mid-flight;
+ * intent if there is one, and then [PaymentSession.attachHost] to claim it. A recreated
+ * Activity therefore finds the same engine mid-flight;
  * [PaymentSession.startIfNeeded] is a no-op the second time, so the intent is not read
  * again and no second confirm can be sent. `onDestroy` releases the session **only** when
  * finishing for good — on a configuration change it does nothing, which is precisely what
@@ -66,7 +78,7 @@ import kotlinx.coroutines.launch
  * no confirm in flight it settles `PENDING`; with nothing in the air, `CANCELLED`. The
  * ViewModel owns that decision; see [PaymentViewModel.onBackRequested].
  */
-internal class UQPayPaymentActivity : AppCompatActivity() {
+internal class UQPayPaymentActivity : ComponentActivity() {
 
     private lateinit var paymentIntentId: String
     private var session: PaymentSession? = null
@@ -79,8 +91,25 @@ internal class UQPayPaymentActivity : AppCompatActivity() {
      */
     private var billingDetails: PaymentSessionParams.BillingDetails? = null
 
+    /**
+     * The merchant's optional payment-method allow-list, re-read from the launch Intent on
+     * every creation for the same reason as [billingDetails]. Null means no restriction. It
+     * reaches the ViewModel through the factory rather than being applied here, because
+     * "which methods the list shows" is a screen decision and every other one lives there.
+     */
+    private var allowedPaymentMethods: Set<PaymentMethodType>? = null
+
     /** Set by [finishWith]; the exactly-once guard for this Activity instance. */
     private var delivered = false
+
+    /**
+     * The customer-facing sentences for the failures this class reports directly.
+     *
+     * Built from the Activity rather than the application context so the sentence follows
+     * any per-Activity locale or configuration the host has applied — the same reason
+     * [rememberFormattedAmount] reads the configuration rather than `Locale.getDefault()`.
+     */
+    private val errorCopy: ErrorCopy by lazy { ErrorCopy.from(this) }
 
     /**
      * Created lazily on first access, which happens only after [session] is set — every
@@ -88,11 +117,16 @@ internal class UQPayPaymentActivity : AppCompatActivity() {
      */
     @get:VisibleForTesting
     internal val viewModel: PaymentViewModel by viewModels {
-        PaymentViewModel.factory(paymentIntentId, checkNotNull(session) { "session must be attached first" })
+        PaymentViewModel.factory(
+            paymentIntentId,
+            checkNotNull(session) { "session must be attached first" },
+            allowedPaymentMethods,
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        paintWindowBackground()
 
         val params = readParams()
         if (params == null) {
@@ -104,6 +138,7 @@ internal class UQPayPaymentActivity : AppCompatActivity() {
         }
         paymentIntentId = params.paymentIntentId
         billingDetails = params.billingDetails
+        allowedPaymentMethods = params.allowedPaymentMethods
         if (paymentIntentId.isBlank()) {
             // The merchant handed us no intent. Reportable — the merchant's own bug, named
             // as such — but there is nothing to attach to. The id is blank because it was
@@ -112,6 +147,23 @@ internal class UQPayPaymentActivity : AppCompatActivity() {
                 failure(
                     UQPayErrorCode.INVALID_CONFIGURATION,
                     "PaymentSessionParams.paymentIntentId is blank. Create the intent on your backend and pass its id.",
+                ),
+            )
+            return
+        }
+
+        // A presentation that names a method the allow-list excludes contradicts itself.
+        // Caught here, before a session exists and before a single byte goes to the gateway:
+        // the alternative is opening the card form for a payment the merchant's own rules
+        // said may not use a card, which is worse than any error message.
+        contradictedMethod(params)?.let { excluded ->
+            finishWith(
+                failure(
+                    UQPayErrorCode.INVALID_PAYMENT_METHOD,
+                    "PaymentSessionParams.presentation asks for '${excluded.raw}', which is " +
+                        "not in allowedPaymentMethods " +
+                        "(${params.allowedPaymentMethods?.joinToString { it.raw }}). " +
+                        "Either widen the allow-list or present a method that is in it.",
                 ),
             )
             return
@@ -132,6 +184,11 @@ internal class UQPayPaymentActivity : AppCompatActivity() {
             return
         }
         session = attached
+        // Declares this instance a host of the payment, balanced in onDestroy. Two Activities
+        // can legitimately hold one payment at a time — split-screen, two tasks, or simply the
+        // overlap while one is replaced — and the session's scope must outlive the first of
+        // them to be destroyed. See PaymentSession.attachHost.
+        attached.attachHost()
 
         // First creation: loads the intent. Recreation: a no-op — the engine is already
         // wherever it got to. The screen never has to know which.
@@ -219,9 +276,49 @@ internal class UQPayPaymentActivity : AppCompatActivity() {
      */
     override fun onDestroy() {
         super.onDestroy()
-        if (isFinishing && !isChangingConfigurations && session != null) {
-            ThreeDsBrowsingState.clear(paymentIntentId)
-            PaymentSession.release(paymentIntentId)
+        val attached = session ?: return
+        val forGood = isFinishing && !isChangingConfigurations
+        if (forGood) ThreeDsBrowsingState.clear(paymentIntentId)
+        // Detached on **every** destroy, not only the final one, so the host count stays
+        // balanced against the attach in onCreate — a rotation that only ever attached would
+        // count a new host per turn of the phone and the session could never be retired.
+        // `forGood` is what decides whether the payment is over; the count decides only
+        // whether this was the last Activity that could still be driving it.
+        attached.detachHost(forGood = forGood)
+    }
+
+    /**
+     * A second launch arrived while this instance is still up.
+     *
+     * Reachable only if the launch Intent carries `FLAG_ACTIVITY_SINGLE_TOP` or the Activity's
+     * launch mode is changed to one that reuses instances — neither of which the SDK does
+     * today (see the manifest). It exists because the failure it prevents is silent and
+     * expensive, and because "the manifest currently says otherwise" is not a property this
+     * class can enforce from here.
+     *
+     * When an existing instance is reused, `onCreate` does **not** run: [paymentIntentId],
+     * the session, the ViewModel and the delivery collector all still belong to the *first*
+     * payment. A second payment's parameters would simply be dropped, the customer would
+     * complete the payment already on screen, and the merchant's second `launch` would be
+     * answered by the first payment's outcome — the wrong order marked paid.
+     *
+     * There is no honest way to host two payments in one instance, so this refuses to try. A
+     * re-launch of the *same* payment is the harmless case and is adopted, so that a later
+     * re-read of the launch arguments sees the Intent the caller actually sent. A re-launch of
+     * a *different* one is ignored outright: the payment on screen is left exactly as it
+     * was, which is the only option that cannot lose money. (Ignored silently — this class
+     * holds no logger; the session owns the SDK's logging, and reaching for it here would
+     * put a second construction site behind `loggingEnabled`.)
+     */
+    // Widened from `protected` so the test can deliver a second launch the way the framework
+    // would; `ActivityScenario` has no hook for it. Nothing is exposed — the class itself is
+    // internal, so this is visible only inside the SDK.
+    @VisibleForTesting
+    public override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val incoming = readParams(intent)?.paymentIntentId
+        if (session != null && incoming != null && incoming == paymentIntentId) {
+            setIntent(intent)
         }
     }
 
@@ -230,8 +327,8 @@ internal class UQPayPaymentActivity : AppCompatActivity() {
      * re-marshals the Intent without the app's classloader attached, so it must be set
      * explicitly or `getParcelable` silently returns null.
      */
-    private fun readParams(): PaymentSessionParams? = runCatching {
-        intent?.extras
+    private fun readParams(source: Intent? = intent): PaymentSessionParams? = runCatching {
+        source?.extras
             ?.apply { classLoader = PaymentSessionParams::class.java.classLoader }
             ?.let { extras ->
                 @Suppress("DEPRECATION")
@@ -258,12 +355,75 @@ internal class UQPayPaymentActivity : AppCompatActivity() {
         finish()
     }
 
-    private fun failure(code: UQPayErrorCode, message: String): PaymentResult =
+    /**
+     * A failure this Activity decided on its own.
+     *
+     * Two sentences, from two places. The customer's comes from [ErrorCopy] — that is, from
+     * `strings.xml`, translatable and overridable — and the developer's is the [detail]
+     * passed in here, which names the merchant's mistake precisely and is never shown to a
+     * shopper. The old signature took one string and used it for both, which is how a
+     * shopper could end up reading "PaymentSessionParams.paymentIntentId is blank".
+     */
+    private fun failure(code: UQPayErrorCode, detail: String): PaymentResult =
         PaymentResult(
             status = PaymentStatus.FAILED,
             paymentIntentId = paymentIntentId,
-            error = UQPayError(code = code, message = message),
+            error = UQPayError(
+                code = code,
+                message = errorCopy.forCode(code),
+                developerMessage = detail,
+            ),
         )
+
+    /**
+     * The method an explicit presentation names but the allow-list forbids, or null when
+     * there is no contradiction.
+     *
+     * Only [PaymentSessionParams.Presentation.CardOnly] and
+     * [PaymentSessionParams.Presentation.SingleWallet] can contradict anything: they name
+     * exactly one method. [PaymentSessionParams.Presentation.MethodList] names none — it
+     * shows whatever survives the filter, up to and including nothing — so it is never a
+     * contradiction, only a shorter list.
+     *
+     * A null allow-list is no restriction and therefore excludes nothing.
+     */
+    private fun contradictedMethod(params: PaymentSessionParams): PaymentMethodType? {
+        val allowed = params.allowedPaymentMethods ?: return null
+        val named = when (val presentation = params.presentation) {
+            PaymentSessionParams.Presentation.CardOnly -> PaymentMethodType.CARD
+            is PaymentSessionParams.Presentation.SingleWallet -> presentation.method
+            PaymentSessionParams.Presentation.MethodList -> null
+        }
+        return named?.takeIf { it !in allowed }
+    }
+
+    /**
+     * Paints the window with the configured background before Compose draws anything.
+     *
+     * The manifest theme can only express one background per resource qualifier, so on its
+     * own it draws the *device's* preference — which is wrong for a merchant who set
+     * `UQPayAppearance.ColorMode.LIGHT` on a phone in dark mode, and wrong for any merchant
+     * whose brand background is not Material's. The visible symptom is a dark or lilac flash
+     * on the frame between the Activity's window appearing and the first Compose frame, at
+     * the last step of a checkout.
+     *
+     * Reads the same [UQPayAppearance] the Compose theme does, through the same
+     * dark-or-light decision, so the two cannot disagree. `uiMode` is deliberately not in the
+     * Activity's `configChanges`, so a dark-mode change recreates the Activity and this runs
+     * again with the new configuration.
+     */
+    private fun paintWindowBackground() {
+        val appearance = UQPay.appearanceOrDefault()
+        val dark = when (appearance.colorMode) {
+            UQPayAppearance.ColorMode.LIGHT -> false
+            UQPayAppearance.ColorMode.DARK -> true
+            UQPayAppearance.ColorMode.SYSTEM ->
+                resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
+                    Configuration.UI_MODE_NIGHT_YES
+        }
+        val colors = if (dark) appearance.darkColors else appearance.lightColors
+        window.setBackgroundDrawable(ColorDrawable(colors.background))
+    }
 
     /** The public presentation → the engine's. One place, so the two cannot drift. */
     private fun PaymentSessionParams.Presentation.toEngine(): Presentation = when (this) {

@@ -1,5 +1,6 @@
 package com.uqpay.sdk.engine
 
+import com.uqpay.sdk.testErrorCopy
 import com.uqpay.sdk.Environment
 import com.uqpay.sdk.error.UQPayErrorCode
 import com.uqpay.sdk.network.AttemptPaymentMethodDto
@@ -36,6 +37,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -53,6 +56,7 @@ import java.util.concurrent.TimeUnit
  * No real card number, key or API secret appears in this file.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
 class PaymentEngineTest {
 
     // ---- Latch: exactly one terminal --------------------------------------------------
@@ -106,7 +110,7 @@ class PaymentEngineTest {
                     confirmStep = ScriptedConfirmStep(),
                     watchStep = ScriptedWatchStep(),
                     intentSource = ScriptedIntentSource(),
-                    errorMapper = ErrorMapper(Environment.SANDBOX),
+                    errorMapper = ErrorMapper(Environment.SANDBOX, testErrorCopy()),
                     wallClock = { FIXED_NOW },
                 )
                 val startGate = CountDownLatch(1)
@@ -119,7 +123,7 @@ class PaymentEngineTest {
                         val outcome: EngineOutcome = if (i % 2 == 0) {
                             EngineOutcome.Cancelled(null)
                         } else {
-                            EngineOutcome.Failed(ErrorMapper(Environment.SANDBOX).map(IllegalStateException("racer-$i")), null)
+                            EngineOutcome.Failed(ErrorMapper(Environment.SANDBOX, testErrorCopy()).map(IllegalStateException("racer-$i")), null)
                         }
                         try {
                             startGate.await()
@@ -139,6 +143,167 @@ class PaymentEngineTest {
                 val expected = if (winners.first() % 2 == 0) PaymentStatus.CANCELLED else PaymentStatus.FAILED
                 assertEquals("round $round: Terminal must be the winner's, not a later overwrite", expected, (terminal as EngineState.Terminal).result.status)
                 assertEquals(ConfirmAcceptance.REJECTED_NOT_CONFIRMABLE, engine.confirm(cardPayload()))
+            }
+        } finally {
+            pool.shutdownNow()
+            realScope.cancel()
+        }
+    }
+
+    /**
+     * **`settle` holds the same monitor as `confirm` (audit item 16).**
+     *
+     * The once-only latch makes *settling* exactly-once, but on its own it does not order a
+     * settle against [PaymentEngine.confirm], which reads `settled` and the current state and
+     * *then* launches an attempt. Interleaved, a confirm passes its guard, a poll or a cancel
+     * settles microseconds later, and the confirm — already past the guard — puts a request on
+     * the wire for a payment the merchant has just been told is finished. Nothing on screen
+     * betrays it: `moveTo` refuses to repaint a `Terminal`. The request still goes.
+     *
+     * Asserted structurally rather than by racing, because the window is a handful of
+     * instructions wide and a thread race that happens to miss it proves nothing. A holder
+     * takes the engine's own lock; `settle` must then block until it is released. Remove the
+     * `synchronized` from `settle` and this test fails immediately and every time.
+     */
+    @Test
+    fun `settle waits for the engine's lock, so no confirm can slip past a decided payment`() {
+        val realScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        try {
+            val engine = PaymentEngine(
+                paymentIntentId = INTENT_ID,
+                scope = realScope,
+                confirmStep = ScriptedConfirmStep(),
+                watchStep = ScriptedWatchStep(),
+                intentSource = ScriptedIntentSource(),
+                errorMapper = ErrorMapper(Environment.SANDBOX, testErrorCopy()),
+                wallClock = { FIXED_NOW },
+            )
+            val lock = PaymentEngine::class.java.getDeclaredField("lock")
+                .apply { isAccessible = true }
+                .get(engine)!!
+            val settle = PaymentEngine::class.java
+                .getDeclaredMethod("settle", EngineOutcome::class.java, Int::class.javaObjectType)
+                .apply { isAccessible = true }
+
+            val holding = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val settled = CountDownLatch(1)
+            val pool = Executors.newFixedThreadPool(2)
+            try {
+                pool.execute {
+                    synchronized(lock) {
+                        holding.countDown()
+                        release.await()
+                    }
+                }
+                assertTrue(holding.await(20, TimeUnit.SECONDS))
+
+                pool.execute {
+                    settle.invoke(engine, EngineOutcome.Cancelled(null), null)
+                    settled.countDown()
+                }
+
+                assertFalse(
+                    "settle decided the payment while another caller held the engine's lock — " +
+                        "a confirm mid-guard can then launch a request for a payment already reported",
+                    settled.await(250, TimeUnit.MILLISECONDS),
+                )
+                assertFalse("nothing may be reported yet", engine.state.value is EngineState.Terminal)
+
+                release.countDown()
+                assertTrue("settle must proceed once the lock is free", settled.await(20, TimeUnit.SECONDS))
+                assertTrue(engine.state.value is EngineState.Terminal)
+            } finally {
+                release.countDown()
+                pool.shutdownNow()
+            }
+        } finally {
+            realScope.cancel()
+        }
+    }
+
+    /**
+     * **A confirm may not be sent after the payment has been reported (audit item 16).**
+     *
+     * The once-only latch makes *settling* exactly-once, but on its own it does not order a
+     * settle against [PaymentEngine.confirm], which reads `settled` and the current state and
+     * *then* launches an attempt. Interleaved, a confirm passes its guard, a cancel settles
+     * `CANCELLED` microseconds later, and the confirm — already past the guard — puts a
+     * request on the wire for a payment the merchant has just been told nobody made. Nothing
+     * on screen shows it: `moveTo` refuses to repaint a `Terminal`. The request still goes.
+     *
+     * The invariant this asserts is the one that costs money: a `CANCELLED` outcome means
+     * **nothing was sent**. Either the confirm won the lock — in which case there is an
+     * attempt in the air, the cancel finds it, and the outcome is `PENDING` — or the settle
+     * won and the confirm is refused. `CANCELLED` alongside a sent confirm is the bug, and it
+     * is what this test looks for over many rounds of a genuine two-thread race.
+     *
+     * Rounds that do not hit the window pass vacuously; a round that hits it can only fail if
+     * the ordering is actually broken, so this cannot produce a false failure.
+     */
+    @Test
+    fun `a confirm racing a settle never sends a request for a cancelled payment`() {
+        val rounds = 300
+        val realScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            repeat(rounds) { round ->
+                val sends = ConcurrentLinkedQueue<String>()
+                val engine = PaymentEngine(
+                    paymentIntentId = INTENT_ID,
+                    scope = realScope,
+                    // Records that an attempt actually started, which is the observable
+                    // equivalent of "a request left the device".
+                    confirmStep = ConfirmStep { payload ->
+                        sends += payload.paymentIntentId
+                        ConfirmOutcome.Unresolved(ErrorMapper(Environment.SANDBOX, testErrorCopy()).map(IllegalStateException("held")))
+                    },
+                    watchStep = ScriptedWatchStep(),
+                    intentSource = ScriptedIntentSource().apply {
+                        enqueue(intent(status = "REQUIRES_PAYMENT_METHOD", methods = listOf("card")))
+                    },
+                    errorMapper = ErrorMapper(Environment.SANDBOX, testErrorCopy()),
+                    wallClock = { FIXED_NOW },
+                )
+                engine.load()
+                // The load runs on the real scope; wait for the method list before racing.
+                val ready = CountDownLatch(1)
+                pool.execute {
+                    while (engine.state.value !is EngineState.SelectingMethod) Thread.sleep(1)
+                    ready.countDown()
+                }
+                assertTrue("round $round never loaded", ready.await(20, TimeUnit.SECONDS))
+
+                val startGate = CountDownLatch(1)
+                val finished = CountDownLatch(2)
+                pool.execute {
+                    try {
+                        startGate.await()
+                        engine.confirm(cardPayload())
+                    } finally {
+                        finished.countDown()
+                    }
+                }
+                pool.execute {
+                    try {
+                        startGate.await()
+                        engine.cancel()
+                    } finally {
+                        finished.countDown()
+                    }
+                }
+                startGate.countDown()
+                assertTrue("round $round did not finish", finished.await(20, TimeUnit.SECONDS))
+
+                val terminal = engine.state.value as? EngineState.Terminal
+                if (terminal?.result?.status == PaymentStatus.CANCELLED) {
+                    // Give a confirm that slipped past the guard time to actually start.
+                    Thread.sleep(2)
+                    assertTrue(
+                        "round $round reported CANCELLED for a payment whose confirm was sent anyway",
+                        sends.isEmpty(),
+                    )
+                }
             }
         } finally {
             pool.shutdownNow()
@@ -1120,7 +1285,7 @@ class PaymentEngineTest {
         val confirm = ScriptedConfirmStep()
         val watch = ScriptedWatchStep()
         val source = ScriptedIntentSource()
-        val mapper = ErrorMapper(environment)
+        val mapper = ErrorMapper(environment, testErrorCopy())
         val engine = PaymentEngine(
             paymentIntentId = INTENT_ID,
             scope = backgroundScope,

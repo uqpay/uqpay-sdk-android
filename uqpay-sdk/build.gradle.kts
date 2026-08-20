@@ -71,8 +71,13 @@ android {
 // reason. The task always prints the actual size so raising it is an informed decision.
 //
 // Recorded baselines: 355,452 B before Compose · 366,201 B after Compose, no UI written ·
-// 686,791 B with the payment UI (Slice 6, 2026-08-18).
-val aarSizeCeilingBytes = 790_000L
+// 686,791 B with the payment UI (Slice 6, 2026-08-18) · 761,149 B with the merchant-facing
+// work of 2026-08-20 (appearance API, test-mode badge, localised error copy, locale-aware
+// amount formatting, method allow-list, builders) — that is +74,358 B, of which the Compose
+// output for the badge and the themed colour scheme is the largest single part, and it is
+// partly offset by androidx.appcompat no longer being a dependency at all. Ceiling raised
+// from 790,000 to 875,000 (measured + ~15%) as a deliberate act, per the note above.
+val aarSizeCeilingBytes = 875_000L
 
 val checkAarSize = tasks.register("checkAarSize") {
     group = "verification"
@@ -111,9 +116,18 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>()
         compilerOptions.freeCompilerArgs.add("-Xexplicit-api=strict")
     }
 
+// Runtime dependencies. Every one of these is transitively imposed on the merchant's app,
+// so the list is published in docs/integration-guide.md ("What this SDK depends on") and is
+// meant to be argued with before anything is added to it.
+//
+// androidx.appcompat is deliberately absent. It was here for exactly one thing — the
+// Theme.AppCompat.DayNight.NoActionBar window theme on the payment Activity — and it cost
+// every merchant an appcompat version constraint for a window background. The Activity now
+// extends androidx.activity.ComponentActivity and uses the SDK's own theme
+// (res/values/themes.xml), and light/dark is UQPayAppearance.colorMode's decision rather
+// than something AppCompat decides from the device.
 dependencies {
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.appcompat)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
@@ -139,6 +153,11 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(libs.turbine)
     testImplementation(libs.androidx.test.core.ktx)
+    // Test-only, and deliberately not an `implementation`. The Fragment host path is served
+    // by androidx.activity's ActivityResultCaller, which Fragment implements — so the SDK
+    // imposes no fragment dependency on merchants. This is here purely so the Java consumer
+    // test can stand a real Fragment up and prove the overload reaches it.
+    testImplementation(libs.androidx.fragment)
     testImplementation(libs.androidx.arch.core.testing)
     // Compose UI tests run under Robolectric here (the plan's disaster catalogue is
     // JVM-only); the same artifact is on the instrumented classpath below.

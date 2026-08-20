@@ -1,5 +1,6 @@
 package com.uqpay.sdk.ui
 
+import com.uqpay.sdk.testErrorCopy
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -73,7 +74,7 @@ import java.time.Duration
 class UQPayPaymentActivityTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
-    private val contract = UQPayPaymentContract()
+    private val contract = UQPayPaymentContract(testErrorCopy())
     private val scheduler = TestCoroutineScheduler()
     private val dispatcher = StandardTestDispatcher(scheduler)
 
@@ -167,6 +168,68 @@ class UQPayPaymentActivityTest {
         }
         assertFalse(scenario.state == Lifecycle.State.DESTROYED)
         scenario.close()
+    }
+
+    // ---- a second launch while one is on screen (audit item 7) -------------------------
+
+    /**
+     * **The crossed-result bug, from the Activity's side.**
+     *
+     * The payment Activity used to be `singleTop`. A second `launch()` while an instance was
+     * up therefore reused it, and reuse skips `onCreate` entirely — so the new launch
+     * parameters went to `onNewIntent`, which did not exist, and were discarded. The customer
+     * carried on paying the *first* intent while the merchant's second launch waited for a
+     * result that could only ever describe the first one: the wrong order marked paid, which
+     * is a direct contradiction of `UQPayPaymentLauncher.launch`'s own contract and of
+     * AC §7.1.
+     *
+     * The launch mode is now the default, so this cannot arise through the SDK's own Intent.
+     * The handler stays as a backstop for anyone who reintroduces an instance-reusing launch
+     * mode or flag, and this test drives it directly: a second payment delivered to a live
+     * instance must change nothing about the payment already on screen.
+     */
+    @Test
+    fun `a re-launch for a different intent never hijacks the payment on screen`() {
+        val (net, session) = attach(INTENT)
+        val scenario = launch(INTENT)
+        pump()
+        val readsBefore = net.gets
+
+        scenario.onActivity { activity ->
+            activity.onNewIntent(contract.createIntent(context, PaymentSessionParams(OTHER_INTENT)))
+        }
+        pump()
+
+        scenario.onActivity { activity ->
+            assertEquals("the Activity adopted a different payment", INTENT, activity.viewModel.paymentIntentId)
+            assertFalse("a second payment must not end the first", activity.isFinishing)
+        }
+        assertSame("the session on screen must be untouched", session, PaymentSession.peek(INTENT))
+        assertNull("nothing may be built for the discarded launch", PaymentSession.peek(OTHER_INTENT))
+        assertEquals("the discarded launch must not have read anything", readsBefore, net.gets)
+
+        // And the payment on screen still ends as its own payment, with its own id.
+        scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        pump()
+        assertEquals(INTENT, deliveredResult(scenario).paymentIntentId)
+    }
+
+    /** A re-launch of the *same* payment is the harmless case: the running sheet keeps it. */
+    @Test
+    fun `a re-launch for the same intent leaves the running payment alone`() {
+        val (net, session) = attach(INTENT)
+        val scenario = launch(INTENT)
+        pump()
+        val readsBefore = net.gets
+
+        scenario.onActivity { activity ->
+            activity.onNewIntent(contract.createIntent(context, PaymentSessionParams(INTENT)))
+        }
+        pump()
+
+        assertSame(session, PaymentSession.peek(INTENT))
+        assertEquals("no second load for a re-launch of the same payment", readsBefore, net.gets)
+        scenario.onActivity { assertFalse(it.isFinishing) }
     }
 
     // ---- rotation mid-payment ----------------------------------------------------------
@@ -704,6 +767,22 @@ class UQPayPaymentActivityTest {
     ): ActivityScenario<UQPayPaymentActivity> =
         ActivityScenario.launchActivityForResult(contract.createIntent(context, PaymentSessionParams(id, presentation)))
 
+    /**
+     * A presentation that names a method the allow-list forbids, for the same launch helper
+     * every other test uses.
+     */
+    private fun launchWithAllowList(
+        id: String,
+        presentation: PaymentSessionParams.Presentation,
+        allowed: Set<PaymentMethodType>?,
+    ): ActivityScenario<UQPayPaymentActivity> =
+        ActivityScenario.launchActivityForResult(
+            contract.createIntent(
+                context,
+                PaymentSessionParams(id, presentation, allowedPaymentMethods = allowed),
+            ),
+        )
+
     /** Runs the engine's pending work and the main looper's, three times, so cross-dispatches settle. */
     private fun pump() {
         repeat(3) {
@@ -733,8 +812,82 @@ class UQPayPaymentActivityTest {
         return contract.parseResult(result.resultCode, result.resultData)
     }
 
+    // ---- the payment-method allow-list -------------------------------------------------
+    //
+    // The allow-list is a merchant's risk control, so the Activity's job is to refuse a
+    // launch that contradicts it rather than to quietly honour one half of it. Caught before
+    // a session exists, so no intent is read and no byte goes to the gateway.
+
+    @Test
+    fun `a card-only presentation with card excluded fails before any network call`() {
+        val (net, _) = attach(INTENT)
+        val scenario = launchWithAllowList(
+            INTENT,
+            PaymentSessionParams.Presentation.CardOnly,
+            setOf(PaymentMethodType.PAYNOW),
+        )
+        pump()
+
+        val result = deliveredResult(scenario)
+        assertEquals(PaymentStatus.FAILED, result.status)
+        assertEquals(UQPayErrorCode.INVALID_PAYMENT_METHOD, result.error?.code)
+        assertEquals("the payment must be named even on this exit", INTENT, result.paymentIntentId)
+        assertEquals("no request may be made for a launch that contradicts itself", 0, net.requests.size)
+
+        // The shopper's sentence never names the merchant's mistake; the developer's does.
+        assertFalse(result.error!!.message.contains("allowedPaymentMethods"))
+        assertTrue(result.error!!.developerMessage.orEmpty().contains("allowedPaymentMethods"))
+    }
+
+    @Test
+    fun `a single-wallet presentation with that wallet excluded fails the same way`() {
+        val (net, _) = attach(INTENT)
+        val scenario = launchWithAllowList(
+            INTENT,
+            PaymentSessionParams.Presentation.SingleWallet(PaymentMethodType.GRABPAY),
+            setOf(PaymentMethodType.CARD),
+        )
+        pump()
+
+        val result = deliveredResult(scenario)
+        assertEquals(PaymentStatus.FAILED, result.status)
+        assertEquals(UQPayErrorCode.INVALID_PAYMENT_METHOD, result.error?.code)
+        assertEquals(0, net.requests.size)
+        assertTrue(result.error!!.developerMessage.orEmpty().contains("grabpay"))
+    }
+
+    /**
+     * `MethodList` names no method, so it can never contradict the allow-list — not even an
+     * empty one, which simply produces an empty list on screen. A launch that started reading
+     * the intent is a launch that was not refused.
+     */
+    @Test
+    fun `a method-list presentation is never refused, even against an empty allow-list`() {
+        val (net, _) = attach(INTENT)
+        launchWithAllowList(INTENT, PaymentSessionParams.Presentation.MethodList, emptySet())
+        pump()
+
+        assertTrue("the intent must still be read", net.requests.isNotEmpty())
+    }
+
+    @Test
+    fun `a presentation the allow-list permits is launched normally`() {
+        val (net, _) = attach(INTENT)
+        launchWithAllowList(
+            INTENT,
+            PaymentSessionParams.Presentation.CardOnly,
+            setOf(PaymentMethodType.CARD, PaymentMethodType.PAYNOW),
+        )
+        pump()
+
+        assertTrue("the intent must still be read", net.requests.isNotEmpty())
+    }
+
     private companion object {
         const val INTENT = "PI_activity_test"
+
+        /** A second, unrelated payment — the one a re-launch must never be answered with. */
+        const val OTHER_INTENT = "PI_activity_test_other"
         const val ACS_URL = "https://acs.example.invalid/challenge/abc"
         const val ACS_ACTION =
             """{"type":"redirect_to_url","redirect_to_url":{"url":"$ACS_URL"}}"""

@@ -25,12 +25,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -38,6 +40,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * The wallet QR screen and the ViewModel projection that feeds it.
@@ -58,6 +61,11 @@ import org.robolectric.RobolectricTestRunner
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
+// Amounts are rendered by the platform's currency formatter, which is locale-dependent by
+// design (SGD is "SGD8.98" in en-US and "8,98 SGD" in de-DE). Pinning the locale here keeps
+// the assertions below about *what is drawn* rather than about the machine running them;
+// AmountFormatTest is where the per-locale behaviour itself is checked.
+@Config(qualifiers = "en-rUS")
 class WalletQrScreenTest {
 
     @get:Rule
@@ -138,7 +146,7 @@ class WalletQrScreenTest {
         show(QrImagePhase.Ready(bitmap()))
 
         compose.onNodeWithText("Pay with GrabPay").assertIsDisplayed()
-        compose.onNodeWithText("SGD 8.98").assertIsDisplayed()
+        compose.onNodeWithText("SGD8.98").assertIsDisplayed()
     }
 
     // ---- failure is retryable ----------------------------------------------------------
@@ -349,6 +357,115 @@ class WalletQrScreenTest {
         val reServed = second.vm.uiState.value as PaymentUiState.WalletQr
         assertEquals(QR_URL, reServed.qrUrl)
         assertEquals(PaymentMethodType.GRABPAY, reServed.methodType)
+    }
+
+    /**
+     * **A re-served QR must be watched by somebody (audit item 14).**
+     *
+     * Re-serving the QR is only half of what a refused claim owes the customer. The QR on
+     * their screen is live and payable; if no poller is watching the intent, they scan it, the
+     * gateway settles the payment, and this session never learns. Worse, with nothing in the
+     * air the engine treats a back-press as `CANCELLED` — so the merchant is told the customer
+     * walked away from an order that was in fact paid, and releases nothing.
+     *
+     * The engine now watches the attempt without confirming it, so the QR arrives as ordinary
+     * `RequiresAction` state, the intent is polled, and leaving reports `PENDING`.
+     */
+    @Test
+    fun `a re-served QR is polled, and leaving it reports PENDING rather than CANCELLED`() = runTest {
+        val h = harness()
+        runCurrent()
+        h.vm.onMethodSelected(PaymentMethodType.GRABPAY)
+        runCurrent()
+        h.answerWithQr()
+        runCurrent()
+        h.vm.onCancelConfirmed()
+        runCurrent()
+        PaymentSession.release(INTENT)
+
+        val second = harness()
+        runCurrent()
+        val readsBeforeTap = second.net.gets
+        second.vm.onMethodSelected(PaymentMethodType.GRABPAY)
+        runCurrent()
+
+        assertEquals("a second confirm would open a second live attempt", 0, second.net.posts.size)
+        assertTrue(
+            "the engine must be watching the attempt the QR belongs to",
+            second.session.state.value is EngineState.RequiresAction,
+        )
+        assertTrue("nobody is polling the re-served QR", second.net.gets > readsBeforeTap)
+        assertTrue("a live QR means an attempt is in the air", second.session.engine.hasAttemptInAir)
+
+        // The customer leaves the re-served QR. The attempt is outstanding, so this is
+        // PENDING — never CANCELLED, which would tell the merchant nothing happened.
+        second.vm.onCancelConfirmed()
+        runCurrent()
+        val terminal = second.session.state.value as EngineState.Terminal
+        assertEquals(PaymentStatus.PENDING, terminal.result.status)
+    }
+
+    /**
+     * **A tap that is refused because a confirm is already on the wire must still do
+     * something (audit item 14).**
+     *
+     * The latch is right to refuse — the first confirm may be creating a payment attempt at
+     * that instant — but the tap used to return with no state change whatsoever: no progress,
+     * no error, nothing. A button that visibly does nothing reads as broken and invites the
+     * customer to tap it until it does something.
+     *
+     * The engine now watches the intent until the other confirm's action appears or the
+     * payment settles, so the screen shows progress with a way out.
+     */
+    @Test
+    fun `a tap while another confirm is in flight shows progress instead of doing nothing`() = runTest {
+        // Somebody else's confirm is on the wire for this intent and wallet: claimed, not yet
+        // reported. This is the state a detached reconciler from a previous session leaves.
+        assertEquals(WalletConfirmClaim.Granted, WalletConfirmLatch().claim(INTENT, PaymentMethodType.GRABPAY.raw))
+
+        val h = harness()
+        runCurrent()
+        assertTrue(h.vm.uiState.value is PaymentUiState.MethodList)
+
+        h.vm.onMethodSelected(PaymentMethodType.GRABPAY)
+        runCurrent()
+
+        assertEquals("nothing may be sent while another confirm is unresolved", 0, h.net.posts.size)
+        assertTrue(
+            "the tap left the customer on the method list with no feedback at all",
+            h.vm.uiState.value is PaymentUiState.Polling,
+        )
+        assertTrue(h.session.engine.hasAttemptInAir)
+    }
+
+    /**
+     * The relaxed decline rule that watching-without-confirming needs, stated on its own.
+     *
+     * An attempt this engine sent and then finds back at `REQUIRES_PAYMENT_METHOD` has died,
+     * and the engine reports that decline. An attempt it merely inherited has no such
+     * guarantee: that status is also what the intent reads while somebody else's confirm is
+     * still in the air. Failing the payment on that reading would be a false decline for a
+     * payment that is about to be made.
+     */
+    @Test
+    fun `an inherited attempt is not declined merely because the intent has no attempt yet`() = runTest {
+        assertEquals(WalletConfirmClaim.Granted, WalletConfirmLatch().claim(INTENT, PaymentMethodType.GRABPAY.raw))
+
+        val h = harness()
+        runCurrent()
+        h.vm.onMethodSelected(PaymentMethodType.GRABPAY)
+        runCurrent()
+
+        // The scripted gateway keeps answering REQUIRES_PAYMENT_METHOD with no attempt on it.
+        repeat(3) {
+            advanceTimeBy(2_500L)
+            runCurrent()
+        }
+
+        assertFalse(
+            "a not-yet-recorded confirm was reported as a decline",
+            h.session.state.value is EngineState.Terminal,
+        )
     }
 
     /** An Alipay tap on the same intent is a different wallet and gets its own confirm. */

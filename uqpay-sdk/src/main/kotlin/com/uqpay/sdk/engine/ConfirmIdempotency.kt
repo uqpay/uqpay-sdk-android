@@ -62,9 +62,9 @@ import kotlin.coroutines.cancellation.CancellationException
  * store** therefore happens under [lock] — including the store round trips, which are a
  * read-modify-write of a shared list and would otherwise lose records under concurrency.
  *
- * Holding a lock across disk IO is deliberate. A `SharedPreferences.commit()` is a few
- * milliseconds and the caller is already on an IO dispatcher; correctness of the pin is
- * worth far more than the contention. The lock is never held across a suspension point,
+ * Holding a lock across disk IO is deliberate. Writing the pin file — a few hundred bytes,
+ * an `fsync` and a rename — is a few milliseconds and the caller is already on an IO
+ * dispatcher; correctness of the pin is worth far more than the contention. The lock is never held across a suspension point,
  * because nothing here suspends.
  *
  * ### Preconditions the caller owes

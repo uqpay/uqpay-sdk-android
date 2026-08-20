@@ -214,6 +214,16 @@ internal class PaymentViewModel(
     val paymentIntentId: String,
     private val session: PaymentSession,
     private val savedState: SavedStateHandle,
+    /**
+     * The merchant's payment-method allow-list, or null for no restriction. Applied to the
+     * method list only; a presentation that contradicts it never reaches this class, because
+     * `UQPayPaymentActivity` refuses that launch before a session is even obtained.
+     *
+     * A constructor parameter rather than saved state: it comes from the launch parcel,
+     * which the Activity re-reads on every creation including the one after process death,
+     * so persisting it here would be a second copy of a value that already survives.
+     */
+    private val allowedPaymentMethods: Set<PaymentMethodType>? = null,
     private val now: () -> Long = SystemClock::elapsedRealtime,
     private val blockedWindowMillis: Long = BLOCKED_WINDOW_MILLIS,
     /**
@@ -287,7 +297,7 @@ internal class PaymentViewModel(
                             amount = state.intent.amount,
                             currency = state.intent.currency,
                             merchantOrderId = state.intent.merchantOrderId,
-                            methods = state.methods.filter { it in RENDERABLE_METHODS },
+                            methods = presentableMethods(state.methods),
                         )
                     }
             }
@@ -325,6 +335,27 @@ internal class PaymentViewModel(
             is EngineState.Terminal -> PaymentUiState.Finishing
         }
 
+    /**
+     * What the method list may show: the engine's methods, in the engine's order, minus the
+     * ones this SDK version cannot render and — when the merchant set one — the ones outside
+     * [allowedPaymentMethods].
+     *
+     * Order is the gateway's, card first, and is never re-sorted here (G21): the merchant's
+     * allow-list is a `Set` and says nothing about order, so honouring its iteration order
+     * would silently rearrange the sheet based on how the merchant happened to build it.
+     *
+     * An **empty** allow-list produces an empty list, and the screen says no methods are
+     * available. That is deliberate. An allow-list is a restriction, and a restriction that
+     * widens itself when it comes out empty is not one; a merchant whose rules can produce an
+     * empty list should not be launching the sheet. The intent's own methods still bound the
+     * result either way, so this can only ever narrow what the gateway offered.
+     */
+    private fun presentableMethods(methods: List<PaymentMethodType>): List<PaymentMethodType> {
+        val renderable = methods.filter { it in RENDERABLE_METHODS }
+        val allowed = allowedPaymentMethods ?: return renderable
+        return renderable.filter { it in allowed }
+    }
+
     private fun NextAction.kind(): ActionKind = when (this) {
         is NextAction.Qr -> ActionKind.QR
         is NextAction.Redirect -> ActionKind.REDIRECT
@@ -346,6 +377,13 @@ internal class PaymentViewModel(
      */
     fun onMethodSelected(method: PaymentMethodType) {
         if (session.state.value !is EngineState.SelectingMethod) return
+        // Belt and braces on the merchant's allow-list. Nothing outside it is drawn, so no
+        // tap can currently produce one — but "the screen does not offer it" is a property of
+        // the screen, and this is a restriction the merchant asked for. Checking it at the
+        // one place a method becomes an attempt means a future list, a deep link, or a test
+        // helper cannot route around it.
+        val allowed = allowedPaymentMethods
+        if (allowed != null && method !in allowed) return
         if (method == PaymentMethodType.CARD) {
             savedState[KEY_CARD_FORM_SHOWN] = true
         } else {
@@ -491,6 +529,26 @@ internal class PaymentViewModel(
      * a fresh idempotency key, and the live sandbox **accepts it**: two attempts, two QRs,
      * and the first one orphaned but still payable. The latch is what stops that.
      *
+     * ### A refused claim must still leave someone watching (audit item 14)
+     *
+     * Refusing the confirm is only half the job. The tap has to *go somewhere*, and the
+     * attempt the latch is protecting has to be observed, or the SDK reports an outcome for a
+     * payment it stopped following:
+     *
+     * - [WalletConfirmClaim.AlreadyIssued] used to draw the remembered QR over the method
+     *   list and nothing else. No poller was watching it, so a customer who scanned it paid an
+     *   attempt this session never learned about — and a back-press then reported `CANCELLED`,
+     *   because with nothing in the air that is what the engine settles. `CANCELLED` for a
+     *   payable QR is the merchant releasing nothing for an order that was paid.
+     * - [WalletConfirmClaim.AlreadyInFlight] used to return with no state change at all: the
+     *   tap did *literally nothing*, which reads as a broken button and invites the customer
+     *   to tap until something happens.
+     *
+     * Both now hand the attempt to [PaymentEngine.watchExistingAttempt], which watches without
+     * confirming: the QR is rendered from engine state like any other action, the wait shows
+     * progress with a way out, and leaving reports `PENDING` — the honest answer while an
+     * attempt is outstanding.
+     *
      * @return the engine's acceptance, or null when no confirm was sent because one had
      *   already been made for this intent and wallet.
      */
@@ -500,16 +558,42 @@ internal class PaymentViewModel(
             WalletConfirmClaim.Granted ->
                 engine.confirm(ConfirmPayload.Wallet.forMethod(paymentIntentId, method.raw))
 
-            // Re-serve the QR the first confirm issued. Never a second confirm.
+            // Re-serve the QR the first confirm issued, and watch the attempt it belongs to.
+            // Never a second confirm.
             is WalletConfirmClaim.AlreadyIssued -> {
-                reIssuedQr.value = claim.qr
+                adoptIssuedQr(claim.qr, method)
                 null
             }
 
-            // A confirm is on the wire and has not answered. There is nothing to show yet
-            // and nothing safe to send; the engine's own progress state covers the wait.
-            WalletConfirmClaim.AlreadyInFlight -> null
+            // A confirm is on the wire and has not answered. Nothing is safe to send and
+            // there is no QR yet; watch the intent until one appears or it settles.
+            WalletConfirmClaim.AlreadyInFlight -> {
+                engine.watchExistingAttempt(methodType = method)
+                null
+            }
         }
+    }
+
+    /**
+     * Shows a QR that a previous confirm issued, and makes sure it is being watched.
+     *
+     * **Watching outranks drawing.** The engine renders the QR as an ordinary
+     * [EngineState.RequiresAction] whenever it has a URL, which is the shape the gateway
+     * actually sends; a QR that somehow arrived as a raw payload alone cannot be expressed as
+     * a [com.uqpay.sdk.engine.NextAction.Qr], so the engine watches without it and the screen
+     * shows progress rather than a code. That is the right way round: an unwatched QR is a
+     * payment this SDK can report wrongly, while an unshown one is a payment the customer
+     * simply has to start again.
+     *
+     * The [reIssuedQr] overlay remains for the case where the engine **declines** to watch —
+     * it is already driving an attempt of its own, or the payment is already decided — where
+     * drawing the remembered QR is still better than drawing the list the customer just tapped
+     * from.
+     */
+    private fun adoptIssuedQr(qr: IssuedQr, method: PaymentMethodType) {
+        val url = qr.url?.takeIf { it.isNotBlank() }
+        val action = url?.let { NextAction.Qr(it, qr.expiresAt) }
+        if (!engine.watchExistingAttempt(action, method)) reIssuedQr.value = qr
     }
 
     /**
@@ -701,10 +785,19 @@ internal class PaymentViewModel(
         )
 
         /** The factory the Activity uses; the saved-state handle comes from the owner. */
-        fun factory(paymentIntentId: String, session: PaymentSession): ViewModelProvider.Factory =
+        fun factory(
+            paymentIntentId: String,
+            session: PaymentSession,
+            allowedPaymentMethods: Set<PaymentMethodType>? = null,
+        ): ViewModelProvider.Factory =
             viewModelFactory {
                 initializer {
-                    PaymentViewModel(paymentIntentId, session, createSavedStateHandle())
+                    PaymentViewModel(
+                        paymentIntentId,
+                        session,
+                        createSavedStateHandle(),
+                        allowedPaymentMethods,
+                    )
                 }
             }
     }

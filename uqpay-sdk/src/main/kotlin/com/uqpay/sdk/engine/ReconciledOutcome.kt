@@ -116,15 +116,22 @@ internal object ReconciledOutcome {
      * @param fallbackFailureCode used only when the attempt carries no code — the 3-D Secure
      *   watcher passes `3ds_failed` for a fallback to `REQUIRES_PAYMENT_METHOD` mid-poll
      *   (G14), which is a decline that the attempt row does not always label.
+     * @param fallbackMethodType the method the *caller* knows this attempt used, consulted
+     *   only when the intent does not name one. `card_declined` is the mapper's fallback for
+     *   an unexplained card failure and must not be pinned on a wallet
+     *   ([ErrorMapper.mapSettledOutcome]); the intent's own `latest_payment_attempt` answers
+     *   that in practice, and this covers the read that arrives without an attempt on it.
      */
     fun failureError(
         intent: PaymentIntentDto,
         mapper: ErrorMapper,
         fallbackFailureCode: String? = null,
+        fallbackMethodType: PaymentMethodType? = null,
     ): UQPayError = mapper.mapSettledOutcome(
         intentStatus = IntentStatus.from(intent.intentStatus),
         failureCode = failureCode(intent) ?: fallbackFailureCode,
         failureMessage = failureMessage(intent),
+        methodType = paymentMethodType(intent) ?: fallbackMethodType,
     )
 
     /** A `FAILED` result carrying [error], with whatever the intent can contribute. */

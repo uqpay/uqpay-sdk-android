@@ -67,7 +67,36 @@ internal class CardFormState(prefill: PaymentSessionParams.BillingDetails? = nul
     // in by the host app would have travelled through an Intent extra to get here, which is
     // card data at rest in a Bundle the OS may write to disk. The customer types these
     // three, always. See PaymentSessionParams.BillingDetails.
-    var pan: String by mutableStateOf("")
+    private var panValue: String by mutableStateOf("")
+
+    /**
+     * The card number, and the one field whose value changes what another field may hold.
+     *
+     * ### Why the setter touches the CVC
+     *
+     * The security code's length follows the brand — four digits on Amex, three everywhere
+     * else (G20) — and the CVC field enforces that as the customer types. It cannot enforce
+     * it *retroactively*: typing `3782…`, then a four-digit code, then replacing the number
+     * with a Visa one leaves four digits in a field the Visa rules cap at three. Nothing in
+     * the form is visibly wrong — every field is filled, no error is drawn, because errors
+     * only appear after a submit attempt and the Pay button is disabled by the very
+     * validation failure it would explain. The form looks complete and is silently dead, and
+     * the customer's only way out is to guess.
+     *
+     * Re-truncating here makes the invariant a property of the *state* rather than of one
+     * field's `onValueChange`, so it holds however the number is changed — typed, pasted,
+     * autofilled, or cleared. Truncation never invents digits: it drops the trailing one, the
+     * customer sees a three-digit code that is now too short, and the CVC field's own error
+     * says so on the next submit. That is a visible, fixable state; the alternative is not.
+     */
+    var pan: String
+        get() = panValue
+        set(value) {
+            panValue = value
+            val allowed = brand.cvcLength
+            if (cvc.length > allowed) cvc = cvc.take(allowed)
+        }
+
     var expiry: String by mutableStateOf("")
     var cvc: String by mutableStateOf("")
 
@@ -414,10 +443,19 @@ internal fun CardForm(
                 val expiry = checked.expiry
                 if (checked.isValid && expiry != null) onSubmit(state.toPayload(paymentIntentId, expiry))
             },
-            // Disabled until every field is right, and while a confirm is already accepted —
-            // the screen-side half of the duplicate-submission guard (AC §8.2). The engine
-            // refuses a second attempt anyway; this is what stops the customer generating one.
-            enabled = submitEnabled && result.isValid,
+            // Disabled **only** while a confirm is already accepted — the screen-side half of
+            // the duplicate-submission guard (AC §8.2). The engine refuses a second attempt
+            // anyway; this is what stops the customer generating one.
+            //
+            // Deliberately *not* disabled by validation, though the click above still refuses
+            // to submit an invalid form. A button greyed out by a rule the customer cannot
+            // see is a dead end: errors appear only after a submit attempt, and a submit
+            // attempt is exactly what the greying prevents. The customer is left with a form
+            // that looks complete, no message anywhere, and nothing to try. Tapping an
+            // enabled button reveals every field error at once, which is the whole point of
+            // validating per field. It also gives a screen reader something to announce —
+            // a disabled control is skipped, so the blocked state was previously silent.
+            enabled = submitEnabled,
             modifier = Modifier
                 .fillMaxWidth()
                 .semantics { contentDescription = payDescription },

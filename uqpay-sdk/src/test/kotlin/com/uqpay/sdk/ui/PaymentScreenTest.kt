@@ -1,5 +1,11 @@
 package com.uqpay.sdk.ui
 
+import com.uqpay.sdk.auth.UQPayTokenProvider
+import com.uqpay.sdk.auth.UQPayAuthToken
+import com.uqpay.sdk.UQPayConfiguration
+import com.uqpay.sdk.UQPay
+import com.uqpay.sdk.Environment
+import androidx.test.core.app.ApplicationProvider
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
@@ -9,6 +15,9 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import com.uqpay.sdk.engine.ConfirmPayload
 import com.uqpay.sdk.payment.PaymentMethodType
 import org.junit.Assert.assertEquals
@@ -16,6 +25,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * The Compose shell, state by state: what each state shows, what it lets the customer tap,
@@ -24,6 +34,11 @@ import org.robolectric.RobolectricTestRunner
  * things; a missing one fails here before it fails a screen reader.
  */
 @RunWith(RobolectricTestRunner::class)
+// Amounts are rendered by the platform's currency formatter, which is locale-dependent by
+// design (SGD is "SGD8.98" in en-US and "8,98 SGD" in de-DE). Pinning the locale here keeps
+// the assertions below about *what is drawn* rather than about the machine running them;
+// AmountFormatTest is where the per-locale behaviour itself is checked.
+@Config(qualifiers = "en-rUS")
 class PaymentScreenTest {
 
     @get:Rule
@@ -65,7 +80,7 @@ class PaymentScreenTest {
                 methods = listOf(PaymentMethodType.CARD, PaymentMethodType.ALIPAY_CN, PaymentMethodType.GRABPAY),
             ),
         )
-        compose.onNodeWithText("SGD 8.98").assertIsDisplayed()
+        compose.onNodeWithText("SGD8.98").assertIsDisplayed()
         compose.onNodeWithText("Order order-1").assertIsDisplayed()
         compose.onNodeWithContentDescription("Pay with Card").assertIsDisplayed()
         compose.onNodeWithContentDescription("Pay with Alipay").assertIsDisplayed()
@@ -95,6 +110,46 @@ class PaymentScreenTest {
         compose.onAllNodes(hasClickAction()).assertCountEquals(0)
         compose.onNodeWithContentDescription("Cancel and leave this screen").assertDoesNotExist()
         compose.onNodeWithContentDescription("Close payment").assertDoesNotExist()
+    }
+
+    /**
+     * **The blocked back-press is announced, not merely drawn (audit item 17).**
+     *
+     * §2c requires that a customer who cannot leave is told why. Changing the sentence on
+     * screen does not tell anybody: TalkBack reads what has focus, and a back-press moves
+     * nothing. Without a live region the rule was satisfied for sighted users only — and this
+     * is the one press in the whole flow that produces no other feedback at all: nothing
+     * closes, nothing moves, no dialog appears.
+     *
+     * Assertive rather than Polite because it answers an action the customer just took.
+     */
+    @Test
+    fun `the blocked-confirm message is a live region so a screen reader announces it`() {
+        show(PaymentUiState.Confirming(PaymentMethodType.ALIPAY_CN, leaveBlocked = true))
+
+        val blocked = compose.onNodeWithText("Confirming your payment. Please don't leave this screen.")
+        blocked.assertIsDisplayed()
+        assertEquals(
+            "the blocked message must interrupt, or a screen-reader user is told nothing",
+            LiveRegionMode.Assertive,
+            blocked.fetchSemanticsNode().config.getOrNull(SemanticsProperties.LiveRegion),
+        )
+    }
+
+    /**
+     * Before the customer has tried to leave, the same text is ordinary progress copy and must
+     * **not** interrupt: nothing has happened that needs answering, and a live region that
+     * fires on arrival talks over whatever the customer was reading.
+     */
+    @Test
+    fun `plain confirming progress is not a live region`() {
+        show(PaymentUiState.Confirming(PaymentMethodType.CARD, leaveBlocked = false))
+
+        assertEquals(
+            null,
+            compose.onNodeWithText("Processing your payment…")
+                .fetchSemanticsNode().config.getOrNull(SemanticsProperties.LiveRegion),
+        )
     }
 
     @Test
@@ -157,6 +212,57 @@ class PaymentScreenTest {
     fun `finishing shows nothing interactive`() {
         show(PaymentUiState.Finishing)
         compose.onAllNodes(hasClickAction()).assertCountEquals(0)
+    }
+
+    // ---- the sandbox badge -----------------------------------------------------------------
+    //
+    // A sandbox sheet and a live one used to be pixel-identical, so a screenshot in a bug
+    // report, a demo, or a QA pass on a build already flipped to production said nothing
+    // about which environment the money was in.
+
+    @Test
+    fun `the sandbox badge is drawn over every screen while the SDK points at sandbox`() {
+        UQPay.initialize(ApplicationProvider.getApplicationContext(), UiTestFixtures.configuration())
+        try {
+            show(PaymentUiState.Loading)
+            compose.onNodeWithContentDescription(
+                "Test mode. This is a sandbox payment; no real money will move.",
+            ).assertIsDisplayed()
+        } finally {
+            UQPay.resetForTest()
+        }
+    }
+
+    @Test
+    fun `the badge is absent in production`() {
+        UQPay.initialize(
+            ApplicationProvider.getApplicationContext(),
+            UQPayConfiguration(
+                clientId = UiTestFixtures.CLIENT_ID,
+                environment = Environment.PRODUCTION,
+                tokenProvider = UQPayTokenProvider {
+                    UQPayAuthToken(UiTestFixtures.TOKEN, System.currentTimeMillis() + 60_000L)
+                },
+            ),
+        )
+        try {
+            show(PaymentUiState.Loading)
+            compose.onNodeWithText("TEST MODE — no real money will move").assertDoesNotExist()
+        } finally {
+            UQPay.resetForTest()
+        }
+    }
+
+    /**
+     * An uninitialised SDK — a `@Preview`, a screenshot test, the frame after process death
+     * before the host's `Application.onCreate` runs again — draws no badge. Claiming "test
+     * mode" without knowing is as misleading as claiming production.
+     */
+    @Test
+    fun `an uninitialised SDK claims neither environment`() {
+        UQPay.resetForTest()
+        show(PaymentUiState.Loading)
+        compose.onNodeWithText("TEST MODE — no real money will move").assertDoesNotExist()
     }
 
     private companion object {

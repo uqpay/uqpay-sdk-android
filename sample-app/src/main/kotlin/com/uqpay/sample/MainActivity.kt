@@ -1,6 +1,8 @@
 package com.uqpay.sample
 
+import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -61,6 +63,12 @@ class MainActivity : AppCompatActivity() {
         renderCart()
         renderEnvironmentBadge()
 
+        // The same payment, driven from Java. Reachable from the app rather than living as
+        // an unreferenced file, because a Java host nobody runs proves nothing.
+        findViewById<Button>(R.id.btn_java_checkout).setOnClickListener {
+            startActivity(Intent(this, JavaCheckoutActivity::class.java))
+        }
+
         val setupProblem = DemoMerchantBackend.setupProblem()
         if (setupProblem != null) {
             showSetupInstructions(setupProblem)
@@ -117,6 +125,10 @@ class MainActivity : AppCompatActivity() {
      * Reads the configured environment rather than the word "SANDBOX", so a build pointed
      * at production says PRODUCTION. A demo build that looks identical to a live one is how
      * someone ends up testing against real money.
+     *
+     * This badge is the *store's*, on the store's own screen. The payment sheet draws its
+     * own — the SDK marks a sandbox sheet itself now, so a merchant does not have to
+     * remember to, and cannot switch it off.
      */
     private fun renderEnvironmentBadge() {
         findViewById<TextView>(R.id.txt_environment_badge).text =
@@ -214,8 +226,18 @@ class MainActivity : AppCompatActivity() {
                     getString(R.string.status_succeeded, result.paymentIntentId)
 
                 // Nothing was charged. Safe to offer the customer another attempt.
-                PaymentStatus.FAILED ->
+                //
+                // Two messages, and they are not interchangeable. `message` is written for
+                // the shopper and is the one that goes on screen; `developerMessage` is
+                // written for you, is English-only, and belongs in a log line or a bug
+                // report. Putting the second one in front of a customer is how a shopper
+                // ends up reading "The UQPAY SDK was used before it was initialized".
+                PaymentStatus.FAILED -> {
+                    result.error?.developerMessage?.let { detail ->
+                        Log.w(TAG, "payment ${result.paymentIntentId} failed: $detail")
+                    }
                     getString(R.string.status_failed, result.error?.message.orEmpty())
+                }
 
                 // The customer backed out before anything was submitted.
                 PaymentStatus.CANCELLED -> getString(R.string.status_cancelled)
@@ -232,5 +254,9 @@ class MainActivity : AppCompatActivity() {
     private fun showStatus(text: String) {
         status.text = text
         status.visibility = View.VISIBLE
+    }
+
+    private companion object {
+        const val TAG = "UQPaySample"
     }
 }

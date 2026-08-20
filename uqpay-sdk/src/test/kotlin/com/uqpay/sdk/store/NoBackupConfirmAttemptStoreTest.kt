@@ -1,7 +1,6 @@
 package com.uqpay.sdk.store
 
 import android.content.Context
-import android.content.SharedPreferences
 import androidx.test.core.app.ApplicationProvider
 import com.uqpay.sdk.engine.BrowserDetails
 import com.uqpay.sdk.engine.BrowserInfo
@@ -17,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.File
 
 /**
  * The store is the only thing that stands between a killed app and a second charge, and it
@@ -28,23 +28,31 @@ import org.robolectric.RobolectricTestRunner
  * that throws on the confirm path converts "we lost relaunch recovery" into "the payment
  * failed", which is a strictly worse outcome in every scenario it can happen in.
  *
+ * The second invariant, and the reason this file replaced `PreferencesConfirmAttemptStoreTest`:
+ * **the blob lives where Android Auto Backup does not look.** A `SharedPreferences` file is
+ * uploaded from every merchant app whose manifest leaves `allowBackup` at its default, which
+ * took a live idempotency key, `ANDROID_ID` and the device IP off the device by default. See
+ * [NoBackupConfirmAttemptStore].
+ *
  * No card number, CVC or real idempotency key appears in this file; the fixture values are
  * invented, and one test asserts the written blob cannot contain such a field at all.
  */
 @RunWith(RobolectricTestRunner::class)
-class PreferencesConfirmAttemptStoreTest {
+class NoBackupConfirmAttemptStoreTest {
 
     private val context = ApplicationProvider.getApplicationContext<Context>()
 
-    /** The real production file, opened the same way the production constructor opens it. */
-    private val preferences: SharedPreferences =
-        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    /** The real production file, resolved the same way the production constructor resolves it. */
+    private val file: File
+        get() = File(context.noBackupFilesDir, NoBackupConfirmAttemptStore.FILE_NAME)
 
-    private val store = PreferencesConfirmAttemptStore(context)
+    private val store = NoBackupConfirmAttemptStore(context)
 
     @After
     fun tearDown() {
-        preferences.edit().clear().commit()
+        file.delete()
+        File(file.parentFile, file.name + ".tmp").delete()
+        context.deleteSharedPreferences(NoBackupConfirmAttemptStore.LEGACY_PREFERENCES_NAME)
     }
 
     // ---- Fixtures --------------------------------------------------------------------
@@ -88,12 +96,79 @@ class PreferencesConfirmAttemptStoreTest {
         ipAddress = ipAddress,
     )
 
-    /** Writes a raw value straight into the production entry, bypassing the store. */
+    /** Writes a raw value straight into the production file, bypassing the store. */
     private fun writeRawBlob(blob: String) {
-        assertTrue(preferences.edit().putString(RECORDS_KEY, blob).commit())
+        file.parentFile?.mkdirs()
+        file.writeText(blob)
     }
 
-    private fun storedBlob(): String? = preferences.getString(RECORDS_KEY, null)
+    private fun storedBlob(): String? = file.takeIf { it.isFile }?.readText()
+
+    // ---- Where the blob lives (the Auto Backup rule) ------------------------------------
+
+    /**
+     * **The finding this store exists for.** `getNoBackupFilesDir()` is the one location
+     * Android documents as excluded from Auto Backup, and it is the only mechanism available
+     * to a *library*: `android:fullBackupContent` and `android:dataExtractionRules` are
+     * application attributes, so a library that set them would either override a merchant's
+     * own rules or fail their build with a manifest-merger conflict.
+     *
+     * If this ever moves back under `getFilesDir()` or into `SharedPreferences`, live
+     * idempotency keys and `ANDROID_ID` start leaving every merchant's device again, silently.
+     */
+    @Test
+    fun `the blob is written inside the no-backup directory`() {
+        store.save(listOf(record(1)))
+
+        assertTrue("the pin file was not written", file.isFile)
+        assertEquals(context.noBackupFilesDir, file.parentFile)
+        assertFalse(
+            "the pin file is inside the backed-up files directory",
+            file.canonicalPath.startsWith(File(context.filesDir, "").canonicalPath + File.separator),
+        )
+    }
+
+    /**
+     * The `SharedPreferences` file the previous implementation wrote is **deleted, not
+     * migrated**, the first time the new store reads.
+     *
+     * An upgraded app must not keep a copy of the pins at a path that Auto Backup uploads.
+     * Carrying them across would preserve a pin for a payment that was mid-confirm when the
+     * app was updated — the rarest kind of process death — at the price of copying the
+     * exposure forward. Losing it degrades to the pre-confirm intercept, which is the same
+     * safety net the reinstall case has always relied on.
+     */
+    @Test
+    fun `the legacy preferences blob is deleted on first read`() {
+        val legacy = context.getSharedPreferences(NoBackupConfirmAttemptStore.LEGACY_PREFERENCES_NAME, Context.MODE_PRIVATE)
+        assertTrue(legacy.edit().putString("com.uqpay.sdk.confirm-pins.v1", "[]").commit())
+
+        val fresh = NoBackupConfirmAttemptStore(context)
+        assertEquals(emptyList<PersistedConfirmAttempt>(), fresh.load())
+
+        val reopened = context.getSharedPreferences(NoBackupConfirmAttemptStore.LEGACY_PREFERENCES_NAME, Context.MODE_PRIVATE)
+        assertTrue("the legacy pin blob survived the upgrade", reopened.all.isEmpty())
+    }
+
+    /** The cleanup runs once per store, not on every read, and never throws. */
+    @Test
+    fun `the legacy cleanup runs once and its failure is not fatal`() {
+        var calls = 0
+        val recording = RecordingLogger()
+        val hostile = NoBackupConfirmAttemptStore(
+            file = { file },
+            logger = recording,
+            legacyCleanup = {
+                calls++
+                throw IllegalStateException("cannot delete")
+            },
+        )
+
+        repeat(3) { assertEquals(emptyList<PersistedConfirmAttempt>(), hostile.load()) }
+
+        assertEquals(1, calls)
+        assertEquals(1, recording.errors.size)
+    }
 
     // ---- Corruption: every shape degrades to empty ------------------------------------
 
@@ -107,9 +182,9 @@ class PreferencesConfirmAttemptStoreTest {
     }
 
     /**
-     * The realistic corruption: the process died partway through writing the file, so the
-     * blob stops mid-token. `isLenient = false` on the shared codec is what makes this fail
-     * loudly enough for the store to notice and discard.
+     * The realistic corruption: an older version died partway through writing the file, so
+     * the blob stops mid-token. `isLenient = false` on the shared codec is what makes this
+     * fail loudly enough for the store to notice and discard.
      */
     @Test
     fun `a truncated blob loads as an empty list`() {
@@ -144,11 +219,11 @@ class PreferencesConfirmAttemptStoreTest {
     }
 
     /**
-     * An empty string is what a partially-cleared or zero-length write leaves behind. It is
-     * not valid JSON, and it must not reach the parser as though it were.
+     * An empty file is what a zero-length or interrupted write leaves behind. It is not valid
+     * JSON, and it must not reach the parser as though it were.
      */
     @Test
-    fun `an empty string blob loads as an empty list`() {
+    fun `an empty file loads as an empty list`() {
         writeRawBlob("")
 
         assertEquals(emptyList<PersistedConfirmAttempt>(), store.load())
@@ -242,9 +317,21 @@ class PreferencesConfirmAttemptStoreTest {
         val records = listOf(record(7), record(8))
         store.save(records)
 
-        val afterRelaunch = PreferencesConfirmAttemptStore(context)
+        val afterRelaunch = NoBackupConfirmAttemptStore(context)
 
         assertEquals(records, afterRelaunch.load())
+    }
+
+    /**
+     * The write is atomic: the temp file it goes through is not left behind, and never
+     * becomes the file the next load reads.
+     */
+    @Test
+    fun `a completed write leaves no temporary file behind`() {
+        store.save(listOf(record(1)))
+
+        assertFalse(File(file.parentFile, file.name + ".tmp").exists())
+        assertEquals(listOf(record(1)), store.load())
     }
 
     // ---- Round trip and ordering ------------------------------------------------------
@@ -333,19 +420,19 @@ class PreferencesConfirmAttemptStoreTest {
     // ---- Clearing ---------------------------------------------------------------------
 
     /**
-     * Saving nothing removes the entry rather than writing `"[]"`. Both read back as an
-     * empty list, so the choice costs nothing — and it means a device with no live payments
-     * leaves no residue at rest at all, instead of an empty artefact that looks like state.
+     * Saving nothing deletes the file rather than writing `"[]"`. Both read back as an empty
+     * list, so the choice costs nothing — and it means a device with no live payments leaves
+     * no residue at rest at all, instead of an empty artefact that looks like state.
      */
     @Test
-    fun `saving an empty list clears the entry rather than writing an empty array`() {
+    fun `saving an empty list clears the file rather than writing an empty array`() {
         store.save(listOf(record(1)))
         assertNotNull(storedBlob())
 
         store.save(emptyList())
 
         assertNull("the store left an empty artefact behind", storedBlob())
-        assertFalse(preferences.contains(RECORDS_KEY))
+        assertFalse(file.exists())
         assertEquals(emptyList<PersistedConfirmAttempt>(), store.load())
     }
 
@@ -372,56 +459,40 @@ class PreferencesConfirmAttemptStoreTest {
     // ---- Write failure is never fatal --------------------------------------------------
 
     /**
-     * The disk refuses the commit. `SharedPreferences.commit()` reports this as `false`
-     * rather than throwing — which is exactly why `apply()` is not used: it cannot report
-     * it at all, and a silent write failure on the pin path is the thing that would go
-     * unnoticed until a customer was charged twice.
+     * The disk refuses the write. A payment SDK cannot let that surface: the in-memory pin
+     * still protects this session, and only relaunch recovery is lost.
+     *
+     * The failure is produced the way a real one arrives — a path that cannot be opened for
+     * writing — rather than by mocking the filesystem.
      */
     @Test
-    fun `a commit that returns false does not throw`() {
+    fun `a write that cannot be opened does not throw`() {
         val recording = RecordingLogger()
-        val failing = PreferencesConfirmAttemptStore(
-            preferences = { RefusingPreferences(preferences, throwOnCommit = false) },
-            logger = recording,
-        )
+        val failing = NoBackupConfirmAttemptStore(file = { unwritableTarget() }, logger = recording)
 
         failing.save(listOf(record(1)))
 
         assertTrue("a refused write went unreported", recording.errors.isNotEmpty())
     }
 
-    /** The commit throws outright — a full disk surfaces this way too. */
-    @Test
-    fun `a commit that throws does not escape save`() {
-        val recording = RecordingLogger()
-        val failing = PreferencesConfirmAttemptStore(
-            preferences = { RefusingPreferences(preferences, throwOnCommit = true) },
-            logger = recording,
-        )
-
-        failing.save(listOf(record(1)))
-        failing.save(emptyList())
-
-        assertEquals(2, recording.errors.size)
-    }
-
     /**
-     * The preferences file itself cannot be opened. This is not hypothetical: opening a
-     * credential-encrypted preferences file before first unlock (direct boot) throws, and
-     * a store that took the confirm path down in that state would be worse than useless.
+     * The file location itself cannot be resolved. This is not hypothetical: resolving an
+     * app's credential-encrypted storage before first unlock (direct boot) throws, and a store
+     * that took the confirm path down in that state would be worse than useless.
      */
     @Test
-    fun `a preferences file that cannot be opened degrades on both paths`() {
+    fun `a file that cannot be resolved degrades on both paths`() {
         val recording = RecordingLogger()
-        val broken = PreferencesConfirmAttemptStore(
-            preferences = { throw IllegalStateException("SharedPreferences in credential encrypted storage") },
+        val broken = NoBackupConfirmAttemptStore(
+            file = { throw IllegalStateException("storage unavailable before first unlock") },
             logger = recording,
         )
 
         assertEquals(emptyList<PersistedConfirmAttempt>(), broken.load())
         broken.save(listOf(record(1)))
+        broken.save(emptyList())
 
-        assertEquals(2, recording.errors.size)
+        assertEquals(3, recording.errors.size)
     }
 
     /** A failed write leaves whatever was there before; it does not half-destroy it. */
@@ -430,9 +501,7 @@ class PreferencesConfirmAttemptStoreTest {
         val survivors = listOf(record(1))
         store.save(survivors)
 
-        PreferencesConfirmAttemptStore(
-            preferences = { RefusingPreferences(preferences, throwOnCommit = true) },
-        ).save(listOf(record(2)))
+        NoBackupConfirmAttemptStore(file = { unwritableTarget() }).save(listOf(record(2)))
 
         assertEquals(survivors, store.load())
     }
@@ -440,9 +509,7 @@ class PreferencesConfirmAttemptStoreTest {
     /** The default logger discards, so a failure with no logger wired must still not throw. */
     @Test
     fun `a write failure with the default logger still does not throw`() {
-        PreferencesConfirmAttemptStore(
-            preferences = { RefusingPreferences(preferences, throwOnCommit = true) },
-        ).save(listOf(record(1)))
+        NoBackupConfirmAttemptStore(file = { unwritableTarget() }).save(listOf(record(1)))
     }
 
     // ---- What is logged, and what is not ------------------------------------------------
@@ -458,7 +525,7 @@ class PreferencesConfirmAttemptStoreTest {
         val recording = RecordingLogger()
         writeRawBlob("""[{"key_value":"leaked-key-0001","identity_digest":"leaked-digest"}]""")
 
-        PreferencesConfirmAttemptStore(preferences = { preferences }, logger = recording).load()
+        NoBackupConfirmAttemptStore(file = { file }, logger = recording).load()
 
         assertTrue(recording.errors.isNotEmpty())
         val logged = recording.errors.joinToString("\n")
@@ -471,19 +538,17 @@ class PreferencesConfirmAttemptStoreTest {
     // ---- The storage contract itself ----------------------------------------------------
 
     /**
-     * The entry key is `.v1` and is frozen. `PersistedConfirmAttempt`'s field names are a
-     * stored format that every future version must keep decoding, and version identity
-     * lives in this key rather than in a field inside the blob. A change that renames it
-     * orphans every pin already on a customer's device.
+     * The file name is `.v1` and is frozen. `PersistedConfirmAttempt`'s field names are a
+     * stored format that every future version must keep decoding, and version identity lives
+     * in this name rather than in a field inside the blob. A change that renames it orphans
+     * every pin already on a customer's device.
      */
     @Test
-    fun `the blob is written under the frozen versioned key`() {
+    fun `the blob is written under the frozen versioned name`() {
         store.save(listOf(record(1)))
 
-        assertEquals("com.uqpay.sdk.confirm-pins.v1", RECORDS_KEY)
-        assertEquals("com.uqpay.sdk.store", PREFERENCES_NAME)
-        assertNotNull(preferences.getString("com.uqpay.sdk.confirm-pins.v1", null))
-        assertEquals(setOf(RECORDS_KEY), preferences.all.keys)
+        assertEquals("com.uqpay.sdk.confirm-pins.v1.json", NoBackupConfirmAttemptStore.FILE_NAME)
+        assertNotNull(File(context.noBackupFilesDir, "com.uqpay.sdk.confirm-pins.v1.json").takeIf { it.isFile })
     }
 
     /**
@@ -504,7 +569,7 @@ class PreferencesConfirmAttemptStoreTest {
 
         // …and the codec's durability settings are visible in the bytes the store itself
         // produced. Asserted on `written`, captured *before* anything else touches the
-        // entry: a round trip alone proves nothing here, because `ip_address` has a default
+        // file: a round trip alone proves nothing here, because `ip_address` has a default
         // and so an omitted null decodes back to an equal record. Only the bytes differ.
         assertTrue("the store's own blob omitted a null instead of writing it", written.contains("\"ip_address\":null"))
         assertFalse("the store's own blob was pretty-printed", written.contains("\n"))
@@ -581,6 +646,17 @@ class PreferencesConfirmAttemptStoreTest {
 
     // ---- Test doubles -------------------------------------------------------------------
 
+    /**
+     * A target whose parent is a regular file, so opening it for writing fails the way a
+     * revoked directory or a full disk does — through the real filesystem, not a mock.
+     */
+    private fun unwritableTarget(): File {
+        val blocker = File(context.noBackupFilesDir, "uqpay-blocker")
+        blocker.parentFile?.mkdirs()
+        if (!blocker.isFile) blocker.writeText("not a directory")
+        return File(blocker, "pins.json")
+    }
+
     /** Captures what the store tried to log, so the redaction rules can be asserted. */
     private class RecordingLogger : UQPayLogger {
         val errors = mutableListOf<String>()
@@ -592,32 +668,5 @@ class PreferencesConfirmAttemptStoreTest {
             errors += message
             throwables += t
         }
-    }
-
-    /**
-     * Real preferences for reads, a hostile editor for writes — the shape a full disk or a
-     * revoked file takes. Delegation keeps every other member honest, so the store is
-     * exercised against a real `SharedPreferences` in every respect but the one under test.
-     */
-    private class RefusingPreferences(
-        private val delegate: SharedPreferences,
-        private val throwOnCommit: Boolean,
-    ) : SharedPreferences by delegate {
-        override fun edit(): SharedPreferences.Editor =
-            RefusingEditor(delegate.edit(), throwOnCommit)
-    }
-
-    private class RefusingEditor(
-        delegate: SharedPreferences.Editor,
-        private val throwOnCommit: Boolean,
-    ) : SharedPreferences.Editor by delegate {
-        override fun commit(): Boolean =
-            if (throwOnCommit) throw IllegalStateException("no space left on device") else false
-    }
-
-    private companion object {
-        /** Mirrors the production constants, which are private to the store by design. */
-        const val PREFERENCES_NAME = "com.uqpay.sdk.store"
-        const val RECORDS_KEY = "com.uqpay.sdk.confirm-pins.v1"
     }
 }

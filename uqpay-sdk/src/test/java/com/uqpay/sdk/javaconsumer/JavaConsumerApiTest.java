@@ -9,8 +9,14 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import android.content.Context;
+import android.os.Bundle;
 
 import androidx.activity.ComponentActivity;
+import androidx.activity.result.ActivityResultCaller;
+import androidx.annotation.Nullable;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentActivity;
+import com.uqpay.sdk.appearance.UQPayAppearance;
 import androidx.test.core.app.ApplicationProvider;
 
 import com.uqpay.sdk.Environment;
@@ -36,6 +42,8 @@ import org.robolectric.RobolectricTestRunner;
 
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -221,6 +229,142 @@ public class JavaConsumerApiTest {
                 PaymentSessionParams.Presentation.CardOnly.INSTANCE).getBillingDetails());
     }
 
+    /**
+     * The launcher from a <b>Fragment</b>, which is the host half of merchant apps that this
+     * SDK could not serve at all until {@code createPaymentLauncher} took an
+     * {@link androidx.activity.result.ActivityResultCaller}. Both {@code ComponentActivity}
+     * and {@code Fragment} implement it, so one overload covers both with no new dependency.
+     *
+     * <p>Compile-time assertion first: if the overload is ever narrowed back to
+     * {@code ComponentActivity}, this stops building.
+     */
+    @Test
+    public void createPaymentLauncherAcceptsAnyActivityResultCaller() {
+        UQPay.initialize(context, configuration());
+
+        FragmentActivity host = Robolectric.buildActivity(FragmentActivity.class).setup().get();
+        CheckoutFragment fragment = new CheckoutFragment();
+        host.getSupportFragmentManager().beginTransaction().add(fragment, "checkout").commitNow();
+
+        assertNotNull(fragment.payments);
+    }
+
+    /**
+     * A Fragment host written the way the integration guide tells a merchant to write one:
+     * the launcher is created in {@code onCreate}, unconditionally, every time. The framework
+     * enforces this — registering any later throws — which is the same rule the Activity path
+     * has, stated in the Fragment's own vocabulary.
+     */
+    public static class CheckoutFragment extends Fragment {
+        UQPayPaymentLauncher payments;
+
+        @Override
+        public void onCreate(@Nullable Bundle savedInstanceState) {
+            super.onCreate(savedInstanceState);
+            // `this` is an ActivityResultCaller, not a ComponentActivity. If the overload is
+            // ever narrowed back, this line stops compiling.
+            ActivityResultCaller caller = this;
+            payments = UQPay.createPaymentLauncher(caller, result -> { });
+        }
+    }
+
+    /**
+     * {@code cancel()} is on the interface a merchant holds, and is a documented no-op before
+     * any launch — a merchant's "the order was cancelled from the back office" handler must
+     * be safe to run whether or not a sheet is on screen.
+     */
+    @Test
+    public void theLauncherCanBeCancelledFromJava() {
+        UQPay.initialize(context, configuration());
+
+        ComponentActivity activity = Robolectric.buildActivity(ComponentActivity.class).create().get();
+        UQPayPaymentLauncher launcher = UQPay.createPaymentLauncher(activity, result -> { });
+
+        launcher.cancel();
+    }
+
+    /**
+     * The billing prefill through its builder, which is the shape a Java merchant should use.
+     * Ten {@code String} parameters in a row is where {@code city} and {@code state} get
+     * transposed and wrong AVS data ships forever; the builder puts the field name beside the
+     * value, and the compiler will not let a name be wrong.
+     */
+    @Test
+    public void billingDetailsHasAJavaBuilder() {
+        PaymentSessionParams.BillingDetails built = new PaymentSessionParams.BillingDetails.Builder()
+                .firstName("John")
+                .lastName("Tan")
+                .email("john.tan@example.com")
+                .phone("+6591234567")
+                .addressLine1("123 Orchard Road")
+                .addressLine2("#12-01")
+                .city("Singapore")
+                .state("Singapore")
+                .postalCode("238888")
+                .countryCode("SG")
+                .build();
+
+        assertEquals("Singapore", built.getCity());
+        assertEquals("Singapore", built.getState());
+        assertEquals("SG", built.getCountryCode());
+        assertNotNull(new PaymentSessionParams.BillingDetails.Builder().build());
+    }
+
+    /**
+     * The payment-method allow-list, from Java: a {@code Set} on the launch params, and a
+     * presentation that contradicts it is refused at launch rather than half-honoured.
+     */
+    @Test
+    public void theAllowListIsSettableFromJava() {
+        Set<PaymentMethodType> allowed = new LinkedHashSet<>();
+        allowed.add(PaymentMethodType.CARD);
+        allowed.add(PaymentMethodType.PAYNOW);
+
+        PaymentSessionParams params = new PaymentSessionParams(
+                "PI_java_consumer",
+                PaymentSessionParams.Presentation.MethodList.INSTANCE,
+                null,
+                allowed);
+
+        assertEquals(allowed, params.getAllowedPaymentMethods());
+        assertNull(new PaymentSessionParams("PI_java_consumer").getAllowedPaymentMethods());
+    }
+
+    /**
+     * The appearance API, from Java. Colours are plain ARGB ints so no Compose type appears
+     * in the public surface, and both builders exist because ten adjacent ints and two
+     * adjacent palettes are exactly what a positional constructor gets wrong.
+     */
+    @Test
+    public void theAppearanceIsConfigurableFromJava() {
+        UQPayAppearance.Colors brand = new UQPayAppearance.Colors.Builder(UQPayAppearance.Colors.MATERIAL_LIGHT)
+                .primary(0xFF0B5FFF)
+                .onPrimary(0xFFFFFFFF)
+                .build();
+
+        UQPayAppearance appearance = new UQPayAppearance.Builder()
+                .colorMode(UQPayAppearance.ColorMode.LIGHT)
+                .lightColors(brand)
+                .cornerRadiusDp(4f)
+                .build();
+
+        UQPayConfiguration configured = new UQPayConfiguration(
+                "client-java-consumer",
+                Environment.SANDBOX,
+                () -> new UQPayAuthToken("tok", System.currentTimeMillis() + 60_000L),
+                false,
+                appearance);
+
+        assertEquals(0xFF0B5FFF, configured.getAppearance().getLightColors().getPrimary());
+        assertEquals(UQPayAppearance.ColorMode.LIGHT, configured.getAppearance().getColorMode());
+        assertEquals(4f, configured.getAppearance().getCornerRadiusDp(), 0f);
+
+        // Omitted entirely, the default is stock Material 3 following the device.
+        assertEquals(
+                UQPayAppearance.ColorMode.SYSTEM,
+                configuration().getAppearance().getColorMode());
+    }
+
     /** Reading a result: the switch a merchant writes in their callback. */
     @Test
     public void aResultIsReadableAndPaymentStatusSwitches() {
@@ -264,12 +408,18 @@ public class JavaConsumerApiTest {
                 UQPayErrorCode.CARD_DECLINED,
                 "Your card was declined.",
                 "insufficient_funds",
-                null);
+                null,
+                "UQPAY answered HTTP 402 with code=card_declined.");
 
         assertEquals(UQPayErrorCode.CARD_DECLINED, error.getCode());
         assertFalse(UQPayErrorCode.NETWORK_ERROR.equals(error.getCode()));
         assertEquals("insufficient_funds", error.getDeclineCode());
         assertNull(error.getTraceId());
+
+        // The two messages are separate getters, and Java sees both. `getMessage` is the
+        // shopper's; `getDeveloperMessage` is the log line's and must never reach a screen.
+        assertEquals("Your card was declined.", error.getMessage());
+        assertEquals("UQPAY answered HTTP 402 with code=card_declined.", error.getDeveloperMessage());
 
         assertEquals(UQPayErrorCode.CARD_DECLINED, UQPayErrorCode.of("card_declined"));
         assertEquals("a code this SDK version predates is carried, not dropped",

@@ -96,10 +96,34 @@ internal class DefaultUQPayNetworkClient(
 
     private fun shouldRetry(status: Int): Boolean = status == 429 || status >= 500
 
-    /** Honour `Retry-After` when the gateway sends one; it knows better than we do. */
+    /**
+     * Honour `Retry-After` when the gateway sends one — **up to [MAX_RETRY_AFTER_MILLIS]**.
+     *
+     * The header is more informed than our backoff, so it wins inside that bound. It is not
+     * trusted beyond it: the value is an integer of seconds from a response we are already
+     * treating as degraded, and a `Retry-After: 999999` parks the coroutine for eleven days,
+     * three times over. Nothing above this layer can interrupt that — a poll attempt would
+     * simply never return, and a confirm's replay ladder would never reach its next rung — so
+     * the customer sits on a spinner with a live payment and no way to learn its fate.
+     *
+     * The ceiling is the top rung of the confirm replay ladder (10s). A wait longer than the
+     * whole ladder cannot help the request it is delaying: by then the caller's own budget —
+     * the ladder, or the poller's per-attempt ceiling — is what decides the payment.
+     */
     private fun delayFor(response: UQPayResponse, attempt: Int): Long =
-        response.retryAfterSeconds?.takeIf { it > 0 }?.times(1_000L)
+        response.retryAfterSeconds?.takeIf { it > 0 }
+            // Clamped in seconds, before the multiply: `Long.MAX_VALUE / 1000` seconds is a
+            // header a gateway can send, and multiplying it first overflows to a *negative*
+            // delay — an immediate retry storm, which is the opposite of what it asked for.
+            ?.coerceAtMost(MAX_RETRY_AFTER_MILLIS / 1_000L)
+            ?.times(1_000L)
             ?: retryDelaySupplier.delayMillis(attempt)
+
+    internal companion object {
+
+        /** The bound on an honoured `Retry-After`. See [delayFor]. */
+        const val MAX_RETRY_AFTER_MILLIS: Long = 10_000L
+    }
 }
 
 /** Maps transport-level throwables onto the internal hierarchy. Nothing escapes the type. */

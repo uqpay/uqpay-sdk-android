@@ -9,6 +9,7 @@ public final class com/uqpay/sdk/Environment : java/lang/Enum {
 public final class com/uqpay/sdk/UQPay {
 	public static final field INSTANCE Lcom/uqpay/sdk/UQPay;
 	public static final fun createPaymentLauncher (Landroidx/activity/ComponentActivity;Lcom/uqpay/sdk/payment/PaymentCallback;)Lcom/uqpay/sdk/payment/UQPayPaymentLauncher;
+	public static final fun createPaymentLauncher (Landroidx/activity/result/ActivityResultCaller;Lcom/uqpay/sdk/payment/PaymentCallback;)Lcom/uqpay/sdk/payment/UQPayPaymentLauncher;
 	public static final fun getVersion ()Ljava/lang/String;
 	public static final fun initialize (Landroid/content/Context;Lcom/uqpay/sdk/UQPayConfiguration;)V
 	public static final fun isInitialized ()Z
@@ -17,12 +18,94 @@ public final class com/uqpay/sdk/UQPay {
 public final class com/uqpay/sdk/UQPayConfiguration {
 	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/Environment;Lcom/uqpay/sdk/auth/UQPayTokenProvider;)V
 	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/Environment;Lcom/uqpay/sdk/auth/UQPayTokenProvider;Z)V
-	public synthetic fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/Environment;Lcom/uqpay/sdk/auth/UQPayTokenProvider;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/Environment;Lcom/uqpay/sdk/auth/UQPayTokenProvider;ZLcom/uqpay/sdk/appearance/UQPayAppearance;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/Environment;Lcom/uqpay/sdk/auth/UQPayTokenProvider;ZLcom/uqpay/sdk/appearance/UQPayAppearance;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getAppearance ()Lcom/uqpay/sdk/appearance/UQPayAppearance;
 	public final fun getClientId ()Ljava/lang/String;
 	public final fun getEnvironment ()Lcom/uqpay/sdk/Environment;
 	public final fun getLoggingEnabled ()Z
 	public final fun getTokenProvider ()Lcom/uqpay/sdk/auth/UQPayTokenProvider;
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/uqpay/sdk/appearance/UQPayAppearance {
+	public static final field Companion Lcom/uqpay/sdk/appearance/UQPayAppearance$Companion;
+	public static final field DEFAULT Lcom/uqpay/sdk/appearance/UQPayAppearance;
+	public static final field DEFAULT_CORNER_RADIUS_DP F
+	public static final field MAX_CORNER_RADIUS_DP F
+	public fun <init> ()V
+	public fun <init> (Lcom/uqpay/sdk/appearance/UQPayAppearance$ColorMode;Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;F)V
+	public synthetic fun <init> (Lcom/uqpay/sdk/appearance/UQPayAppearance$ColorMode;Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;FILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getColorMode ()Lcom/uqpay/sdk/appearance/UQPayAppearance$ColorMode;
+	public final fun getCornerRadiusDp ()F
+	public final fun getDarkColors ()Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;
+	public final fun getLightColors ()Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/uqpay/sdk/appearance/UQPayAppearance$Builder {
+	public fun <init> ()V
+	public final fun build ()Lcom/uqpay/sdk/appearance/UQPayAppearance;
+	public final fun colorMode (Lcom/uqpay/sdk/appearance/UQPayAppearance$ColorMode;)Lcom/uqpay/sdk/appearance/UQPayAppearance$Builder;
+	public final fun cornerRadiusDp (F)Lcom/uqpay/sdk/appearance/UQPayAppearance$Builder;
+	public final fun darkColors (Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;)Lcom/uqpay/sdk/appearance/UQPayAppearance$Builder;
+	public final fun lightColors (Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;)Lcom/uqpay/sdk/appearance/UQPayAppearance$Builder;
+}
+
+public final class com/uqpay/sdk/appearance/UQPayAppearance$ColorMode : java/lang/Enum {
+	public static final field DARK Lcom/uqpay/sdk/appearance/UQPayAppearance$ColorMode;
+	public static final field LIGHT Lcom/uqpay/sdk/appearance/UQPayAppearance$ColorMode;
+	public static final field SYSTEM Lcom/uqpay/sdk/appearance/UQPayAppearance$ColorMode;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lcom/uqpay/sdk/appearance/UQPayAppearance$ColorMode;
+	public static fun values ()[Lcom/uqpay/sdk/appearance/UQPayAppearance$ColorMode;
+}
+
+public final class com/uqpay/sdk/appearance/UQPayAppearance$Colors {
+	public static final field Companion Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors$Companion;
+	public static final field MATERIAL_DARK Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;
+	public static final field MATERIAL_LIGHT Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;
+	public fun <init> (IIIIIIIIII)V
+	public final fun copy (IIIIIIIIII)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;
+	public static synthetic fun copy$default (Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;IIIIIIIIIIILjava/lang/Object;)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBackground ()I
+	public final fun getError ()I
+	public final fun getOnBackground ()I
+	public final fun getOnError ()I
+	public final fun getOnPrimary ()I
+	public final fun getOnSurface ()I
+	public final fun getOnSurfaceVariant ()I
+	public final fun getOutline ()I
+	public final fun getPrimary ()I
+	public final fun getSurface ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class com/uqpay/sdk/appearance/UQPayAppearance$Colors$Builder {
+	public fun <init> ()V
+	public fun <init> (Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;)V
+	public synthetic fun <init> (Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun background (I)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors$Builder;
+	public final fun build ()Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors;
+	public final fun error (I)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors$Builder;
+	public final fun onBackground (I)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors$Builder;
+	public final fun onError (I)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors$Builder;
+	public final fun onPrimary (I)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors$Builder;
+	public final fun onSurface (I)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors$Builder;
+	public final fun onSurfaceVariant (I)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors$Builder;
+	public final fun outline (I)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors$Builder;
+	public final fun primary (I)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors$Builder;
+	public final fun surface (I)Lcom/uqpay/sdk/appearance/UQPayAppearance$Colors$Builder;
+}
+
+public final class com/uqpay/sdk/appearance/UQPayAppearance$Colors$Companion {
+}
+
+public final class com/uqpay/sdk/appearance/UQPayAppearance$Companion {
 }
 
 public final class com/uqpay/sdk/auth/UQPayAuthToken {
@@ -40,12 +123,13 @@ public final class com/uqpay/sdk/error/UQPayError : android/os/Parcelable {
 	public static final field CREATOR Landroid/os/Parcelable$Creator;
 	public static final field Companion Lcom/uqpay/sdk/error/UQPayError$Companion;
 	public synthetic fun <init> (Landroid/os/Parcel;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public fun <init> (Lcom/uqpay/sdk/error/UQPayErrorCode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
-	public synthetic fun <init> (Lcom/uqpay/sdk/error/UQPayErrorCode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lcom/uqpay/sdk/error/UQPayErrorCode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Lcom/uqpay/sdk/error/UQPayErrorCode;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun describeContents ()I
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCode ()Lcom/uqpay/sdk/error/UQPayErrorCode;
 	public final fun getDeclineCode ()Ljava/lang/String;
+	public final fun getDeveloperMessage ()Ljava/lang/String;
 	public final fun getMessage ()Ljava/lang/String;
 	public final fun getTraceId ()Ljava/lang/String;
 	public fun hashCode ()I
@@ -146,9 +230,11 @@ public final class com/uqpay/sdk/payment/PaymentSessionParams : android/os/Parce
 	public fun <init> (Ljava/lang/String;)V
 	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;)V
 	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails;)V
-	public synthetic fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails;Ljava/util/Set;)V
+	public synthetic fun <init> (Ljava/lang/String;Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails;Ljava/util/Set;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public fun describeContents ()I
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAllowedPaymentMethods ()Ljava/util/Set;
 	public final fun getBillingDetails ()Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails;
 	public final fun getPaymentIntentId ()Ljava/lang/String;
 	public final fun getPresentation ()Lcom/uqpay/sdk/payment/PaymentSessionParams$Presentation;
@@ -188,6 +274,21 @@ public final class com/uqpay/sdk/payment/PaymentSessionParams$BillingDetails : a
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 	public fun writeToParcel (Landroid/os/Parcel;I)V
+}
+
+public final class com/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Builder {
+	public fun <init> ()V
+	public final fun addressLine1 (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Builder;
+	public final fun addressLine2 (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Builder;
+	public final fun build ()Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails;
+	public final fun city (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Builder;
+	public final fun countryCode (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Builder;
+	public final fun email (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Builder;
+	public final fun firstName (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Builder;
+	public final fun lastName (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Builder;
+	public final fun phone (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Builder;
+	public final fun postalCode (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Builder;
+	public final fun state (Ljava/lang/String;)Lcom/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Builder;
 }
 
 public final class com/uqpay/sdk/payment/PaymentSessionParams$BillingDetails$Companion {
@@ -232,6 +333,7 @@ public final class com/uqpay/sdk/payment/PaymentStatus : java/lang/Enum {
 }
 
 public abstract interface class com/uqpay/sdk/payment/UQPayPaymentLauncher {
+	public abstract fun cancel ()V
 	public abstract fun launch (Lcom/uqpay/sdk/payment/PaymentSessionParams;)V
 }
 

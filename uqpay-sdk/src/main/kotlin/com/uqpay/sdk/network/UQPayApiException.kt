@@ -134,9 +134,29 @@ internal sealed class UQPayApiException(
     val isOutcomeUnknown: Boolean
         get() = when (this) {
             is TransportFailure, is TimedOut, is DecodingFailure, is IdempotencyInFlight -> true
-            is ApiError, is UnexpectedStatus -> statusCode == 429 || statusCode >= 500
+            is ApiError, is UnexpectedStatus -> isUnknownOutcomeStatus(statusCode)
             else -> false
         }
+
+    internal companion object {
+
+        /**
+         * HTTP statuses that leave a *sent* request's outcome undetermined.
+         *
+         * 429 and 5xx are the familiar pair: the edge gave up or shed load, and the acquirer
+         * may have authorised anyway.
+         *
+         * **3xx belongs here too, and that is not obvious.** Redirects are deliberately not
+         * followed (`DefaultConnectionFactory.instanceFollowRedirects = false`), so one
+         * surfaces as a non-2xx and would otherwise fall through to "definitive failure" —
+         * releasing the idempotency pin and reporting `FAILED`. A redirect proves nothing
+         * about what the origin did with the POST body: an edge that answers `302` may have
+         * handed the confirm on to a backend that processed it. Treating it as an answer is
+         * how a customer is told a payment failed and taps Pay again under a *fresh* key.
+         */
+        fun isUnknownOutcomeStatus(status: Int): Boolean =
+            status in 300..399 || status == 429 || status >= 500
+    }
 }
 
 /**

@@ -1,8 +1,12 @@
 package com.uqpay.sdk.network
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import com.uqpay.sdk.testErrorCopy
 import com.uqpay.sdk.Environment
 import com.uqpay.sdk.error.UQPayError
 import com.uqpay.sdk.error.UQPayErrorCode
+import com.uqpay.sdk.payment.PaymentMethodType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,9 +26,10 @@ import java.lang.reflect.Modifier
  * *derived*, never hand-listed. Adding a code to [UQPayErrorCode] without giving it a
  * path here fails this test.
  */
+@RunWith(RobolectricTestRunner::class)
 class ErrorMapperReachabilityTest {
 
-    private val mapper = ErrorMapper(Environment.PRODUCTION)
+    private val mapper = ErrorMapper(Environment.PRODUCTION, testErrorCopy())
 
     /**
      * [UQPayErrorCode.NOT_INITIALIZED] is deliberately **not** reachable from
@@ -113,8 +118,21 @@ class ErrorMapperReachabilityTest {
         case("a settled-failed intent with insufficient_funds", UQPayErrorCode.INSUFFICIENT_FUNDS) {
             mapper.mapSettledOutcome(IntentStatus.Failed, failureCode = "insufficient_funds")
         },
-        case("a settled-failed intent with no failure code", UQPayErrorCode.CARD_DECLINED) {
-            mapper.mapSettledOutcome(IntentStatus.Failed, failureCode = null)
+        case("a settled-failed card attempt with no failure code", UQPayErrorCode.CARD_DECLINED) {
+            mapper.mapSettledOutcome(
+                IntentStatus.Failed,
+                failureCode = null,
+                methodType = PaymentMethodType.CARD,
+            )
+        },
+        // The same input on a wallet is deliberately NOT a card decline: nothing about a QR
+        // that expired unscanned is a claim about a card. See ErrorMapper.declineFallback.
+        case("a settled-failed wallet attempt with no failure code", UQPayErrorCode.UNKNOWN) {
+            mapper.mapSettledOutcome(
+                IntentStatus.Failed,
+                failureCode = null,
+                methodType = PaymentMethodType.GRABPAY,
+            )
         },
     )
 

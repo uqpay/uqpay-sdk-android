@@ -16,6 +16,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The same checkout in Java. Not exported: it is reached from MainActivity, and
+             a demo screen that creates payment intents has no business being launchable
+             by another app. -->
+        <activity
+            android:name=".JavaCheckoutActivity"
+            android:exported="false" />
     </application>
 
 </manifest>

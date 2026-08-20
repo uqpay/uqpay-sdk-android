@@ -7,6 +7,7 @@ import com.uqpay.sdk.network.PaymentIntentDto
 import com.uqpay.sdk.network.UQPayApiClient
 import com.uqpay.sdk.network.UQPayApiException
 import com.uqpay.sdk.network.UQPayLogger
+import com.uqpay.sdk.payment.PaymentMethodType
 import com.uqpay.sdk.store.ConfirmAttempt
 import kotlinx.coroutines.CancellationException
 
@@ -214,7 +215,8 @@ internal class ConfirmRunner(
      * A pin minted before the intercept would outlive a payment that was already over.
      */
     private suspend fun prepare(payload: ConfirmPayload, intentSource: IntentSource): Preparation {
-        interceptSettledIntent(intentSource)?.let { return Preparation.Intercepted(it) }
+        interceptSettledIntent(intentSource, PaymentMethodType.of(payload.methodType))
+            ?.let { return Preparation.Intercepted(it) }
 
         val attempt = idempotency.attempt(payload.digest(), payload.paymentIntentId)
         verifyAttemptBelongsTo(payload, attempt)
@@ -246,7 +248,10 @@ internal class ConfirmRunner(
      * customer has in fact made. Reporting the authorisation as the success it is costs
      * nothing and risks nothing.
      */
-    private suspend fun interceptSettledIntent(intentSource: IntentSource): ConfirmOutcome? {
+    private suspend fun interceptSettledIntent(
+        intentSource: IntentSource,
+        methodType: PaymentMethodType,
+    ): ConfirmOutcome? {
         val intent = try {
             intentSource.retrieve()
         } catch (cancellation: CancellationException) {
@@ -273,6 +278,10 @@ internal class ConfirmRunner(
                     intentStatus = status,
                     failureCode = intent.latestPaymentAttempt?.failureCode,
                     failureMessage = intent.latestPaymentAttempt?.failureMessage,
+                    // The intent's own attempt first; the payload's method when the read
+                    // carried no attempt. An unexplained wallet failure must not be reported
+                    // as a card decline — see ErrorMapper.mapSettledOutcome.
+                    methodType = ReconciledOutcome.paymentMethodType(intent) ?: methodType,
                 )
                 else -> null
             },

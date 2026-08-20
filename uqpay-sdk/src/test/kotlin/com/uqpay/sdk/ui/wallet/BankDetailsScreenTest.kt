@@ -18,6 +18,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * Bank-transfer instructions: what is shown, what is copied, and what happens when the
@@ -28,6 +29,11 @@ import org.robolectric.RobolectricTestRunner
  * appears in this file, and none may ever reach `copyToClipboard`.
  */
 @RunWith(RobolectricTestRunner::class)
+// Amounts are rendered by the platform's currency formatter, which is locale-dependent by
+// design (SGD is "SGD8.98" in en-US and "8,98 SGD" in de-DE). Pinning the locale here keeps
+// the assertions below about *what is drawn* rather than about the machine running them;
+// AmountFormatTest is where the per-locale behaviour itself is checked.
+@Config(qualifiers = "en-rUS")
 class BankDetailsScreenTest {
 
     @get:Rule
@@ -56,7 +62,7 @@ class BankDetailsScreenTest {
         show(FULL)
 
         compose.onNodeWithText("Bank transfer").assertIsDisplayed()
-        compose.onNodeWithText("SGD 8.98").assertIsDisplayed()
+        compose.onNodeWithText("SGD8.98").assertIsDisplayed()
         compose.onNodeWithText("Bank name").assertIsDisplayed()
         compose.onNodeWithText("Test Bank of Singapore").assertIsDisplayed()
         compose.onNodeWithText("Account number").assertIsDisplayed()

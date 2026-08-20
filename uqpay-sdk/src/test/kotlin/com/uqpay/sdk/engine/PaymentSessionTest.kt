@@ -230,6 +230,130 @@ class PaymentSessionTest {
         assertSame(a.idempotency, c.idempotency)
     }
 
+    // ---- Hosts: one payment, more than one Activity (audit item 8) ---------------------
+
+    /**
+     * **The stuck-order bug this counter exists for.**
+     *
+     * Two Activities can legitimately hold one payment intent at the same time: split-screen,
+     * two tasks, a merchant that launches the sheet again while the first is still up, or the
+     * overlap while one instance replaces another.
+     *
+     * Before the count existed, the *first* of them to be destroyed retired the shared scope.
+     * The second host was left holding an engine whose coroutines could not run: its confirm
+     * launched on a cancelled scope and returned nothing, back-press stayed blocked for the
+     * full ten seconds waiting on a confirm that could never resolve, and the payment settled
+     * `PENDING` — which tells the merchant to wait for a webhook that is never coming, because
+     * the request never left the device. A permanently stuck order.
+     */
+    @Test
+    fun `a second host keeps the session alive when the first one finishes`() = runTest {
+        val net = ScriptedNetworkClient()
+        val deps = deps(net)
+
+        val session = PaymentSession.obtain(INTENT_A, deps)
+        session.attachHost()
+        PaymentSession.obtain(INTENT_A, deps).attachHost()
+        assertEquals(2, session.hostCount)
+
+        session.startIfNeeded()
+        runCurrent()
+
+        // The first host finishes for good. The session leaves the registry — a *new* launch
+        // must build a fresh engine — but the scope belongs to whoever is still driving it.
+        session.detachHost(forGood = true)
+        runCurrent()
+        assertEquals("a new launch must not adopt a finished flow", null, PaymentSession.peek(INTENT_A))
+        assertTrue("the surviving host's engine was cut off mid-payment", session.isActive)
+        assertEquals(1, session.hostCount)
+
+        // …and it can still send a confirm, which is the whole point.
+        assertEquals(ConfirmAcceptance.STARTED, session.engine.confirm(cardPayload(INTENT_A)))
+        runCurrent()
+        assertEquals("the surviving host's confirm never left the device", 1, net.posts.size)
+
+        // The last host leaves: now it is retired.
+        session.engine.cancel()
+        session.detachHost(forGood = true)
+        runCurrent()
+        assertEquals(0, session.hostCount)
+    }
+
+    /**
+     * A rotation detaches and re-attaches, so the count is balanced across it. A host that
+     * only ever attached would add one per turn of the phone and the session could never be
+     * retired at all — a leak dressed as a fix.
+     */
+    @Test
+    fun `rotation leaves the host count where it started`() = runTest {
+        val deps = deps(ScriptedNetworkClient())
+        val session = PaymentSession.obtain(INTENT_A, deps)
+        session.attachHost()
+
+        repeat(3) {
+            session.detachHost(forGood = false)
+            assertSame("a recreation must find the same session", session, PaymentSession.obtain(INTENT_A, deps))
+            session.attachHost()
+        }
+
+        assertEquals(1, session.hostCount)
+        assertTrue(session.isActive)
+
+        session.detachHost(forGood = true)
+        runCurrent()
+        assertEquals(0, PaymentSession.activeCount)
+        assertFalse(session.isActive)
+    }
+
+    /**
+     * A system-initiated destroy — process death, low memory — is not the flow ending. The
+     * host goes, the session stays where a relaunch can find it, exactly as before this
+     * counter existed.
+     */
+    @Test
+    fun `a host lost without finishing leaves the session in the registry`() = runTest {
+        val deps = deps(ScriptedNetworkClient())
+        val session = PaymentSession.obtain(INTENT_A, deps)
+        session.attachHost()
+
+        session.detachHost(forGood = false)
+        runCurrent()
+
+        assertSame(session, PaymentSession.peek(INTENT_A))
+        assertTrue(session.isActive)
+        assertEquals(0, session.hostCount)
+    }
+
+    /** Retirement is idempotent: a repeated detach cannot cancel a scope twice or leak a watchdog. */
+    @Test
+    fun `repeated detaches are harmless`() = runTest {
+        val session = PaymentSession.obtain(INTENT_A, deps(ScriptedNetworkClient()))
+        session.attachHost()
+
+        repeat(4) { session.detachHost(forGood = true) }
+        runCurrent()
+
+        assertEquals(0, PaymentSession.activeCount)
+        assertFalse(session.isActive)
+        assertEquals("the count must never go negative", 0, session.hostCount)
+    }
+
+    /**
+     * `obtain` is a lookup, not a claim. Tests and diagnostics obtain sessions without hosting
+     * them, and a lookup that silently counted as a host would keep every such session alive
+     * for the life of the process.
+     */
+    @Test
+    fun `obtain alone hosts nothing`() = runTest {
+        val session = PaymentSession.obtain(INTENT_A, deps(ScriptedNetworkClient()))
+
+        assertEquals(0, session.hostCount)
+
+        PaymentSession.release(INTENT_A)
+        runCurrent()
+        assertEquals(0, PaymentSession.activeCount)
+    }
+
     // ---- Lifecycle: release ------------------------------------------------------------
 
     @Test

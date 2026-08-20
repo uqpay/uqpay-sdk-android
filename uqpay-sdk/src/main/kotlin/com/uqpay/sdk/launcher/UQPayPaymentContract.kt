@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import androidx.activity.result.contract.ActivityResultContract
+import com.uqpay.sdk.error.ErrorCopy
 import com.uqpay.sdk.error.UQPayError
 import com.uqpay.sdk.error.UQPayErrorCode
 import com.uqpay.sdk.payment.PaymentResult
@@ -40,7 +41,15 @@ import com.uqpay.sdk.ui.UQPayPaymentActivity
  * contracts across process death, so if R8 strips or renames it the payment result is
  * silently lost in release builds only.
  */
-internal class UQPayPaymentContract : ActivityResultContract<PaymentSessionParams, PaymentResult>() {
+internal class UQPayPaymentContract(
+    /**
+     * The customer-facing sentences, for the one error this class can produce. Passed in
+     * rather than read from a Context here because [parseResult] is handed no Context at
+     * all — the framework calls it with a result code and an Intent — and the sentence must
+     * still come from resources rather than from a literal.
+     */
+    private val copy: ErrorCopy,
+) : ActivityResultContract<PaymentSessionParams, PaymentResult>() {
 
     override fun createIntent(context: Context, input: PaymentSessionParams): Intent =
         Intent(context, UQPayPaymentActivity::class.java)
@@ -69,7 +78,10 @@ internal class UQPayPaymentContract : ActivityResultContract<PaymentSessionParam
                 paymentIntentId = intentId,
                 error = UQPayError(
                     code = UQPayErrorCode.UNKNOWN,
-                    message = "The payment ended without reporting a result.",
+                    message = copy.forCode(UQPayErrorCode.UNKNOWN),
+                    developerMessage = "The payment screen finished with RESULT_OK but no " +
+                        "readable result parcel. Nothing can be concluded about the payment " +
+                        "from this; confirm the intent's status on your backend.",
                 ),
             )
         }

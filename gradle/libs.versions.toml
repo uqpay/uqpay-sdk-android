@@ -12,6 +12,10 @@ coreKtx = "1.15.0"
 appcompat = "1.7.0"
 material = "1.12.0"
 activity = "1.9.3"
+# Test-only. The SDK does not depend on androidx.fragment and must not: the Fragment host
+# path works through androidx.activity's ActivityResultCaller, which Fragment implements.
+# This is here so JavaConsumerApiTest can actually stand a Fragment up and prove that.
+fragment = "1.8.5"
 lifecycle = "2.8.7"
 
 # Compose is the payment UI toolkit (D3). Versions are a deliberate conservative floor:
@@ -48,6 +52,7 @@ androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = 
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 androidx-activity-ktx = { group = "androidx.activity", name = "activity-ktx", version.ref = "activity" }
+androidx-fragment = { group = "androidx.fragment", name = "fragment", version.ref = "fragment" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
 
 androidx-lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycle" }

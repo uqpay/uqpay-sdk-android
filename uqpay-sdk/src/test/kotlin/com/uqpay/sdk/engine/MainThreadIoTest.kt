@@ -27,6 +27,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.io.File
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -42,7 +43,8 @@ import java.util.concurrent.TimeUnit
  * test instead **instruments the three I/O surfaces the SDK actually has** and records the
  * thread each was touched from, while a whole payment runs on real threads:
  *
- * 1. the pin store — `SharedPreferences`, and note it uses `commit()`, a synchronous write;
+ * 1. the pin store — a file in `getNoBackupFilesDir()`, written synchronously and `fsync`ed,
+ *    plus the one-shot deletion of the `SharedPreferences` file it replaced;
  * 2. the API client — every request, through the injected socket;
  * 3. [DeviceInfo] — `Settings.Secure` via the `ContentResolver`, and display metrics via
  *    `Resources`.
@@ -106,7 +108,8 @@ class MainThreadIoTest {
         assertEquals(PaymentStatus.SUCCEEDED, (session.state.value as EngineState.Terminal).result.status)
 
         val sites = touches.map { it.site }.toSet()
-        assertTrue("the pin store must have been exercised, or this test proves nothing", "sharedPreferences" in sites)
+        assertTrue("the pin store must have been exercised, or this test proves nothing", "noBackupFilesDir" in sites)
+        assertTrue("the legacy store cleanup must have been exercised", "deleteSharedPreferences" in sites)
         assertTrue("DeviceInfo's ANDROID_ID read must have been exercised", "contentResolver" in sites)
         assertTrue("the socket must have been exercised", "network" in sites)
 
@@ -148,6 +151,22 @@ class MainThreadIoTest {
     ) : ContextWrapper(base) {
 
         override fun getApplicationContext(): Context = this
+
+        /**
+         * The pin store's directory. Resolving it *creates* it when absent, so this is a real
+         * disk touch and not merely a path lookup — which is what makes it the right surface
+         * to instrument now that the store writes a file rather than `SharedPreferences`.
+         */
+        override fun getNoBackupFilesDir(): File {
+            onTouch("noBackupFilesDir")
+            return super.getNoBackupFilesDir()
+        }
+
+        /** The store's one-shot cleanup of the pre-`no_backup` preferences file. */
+        override fun deleteSharedPreferences(name: String?): Boolean {
+            onTouch("deleteSharedPreferences")
+            return super.deleteSharedPreferences(name)
+        }
 
         override fun getSharedPreferences(name: String?, mode: Int): SharedPreferences {
             onTouch("sharedPreferences")

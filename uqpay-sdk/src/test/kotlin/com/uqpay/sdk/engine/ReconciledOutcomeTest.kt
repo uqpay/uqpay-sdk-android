@@ -1,5 +1,8 @@
 package com.uqpay.sdk.engine
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import com.uqpay.sdk.testErrorCopy
 import com.uqpay.sdk.Environment
 import com.uqpay.sdk.error.UQPayErrorCode
 import com.uqpay.sdk.network.AttemptPaymentMethodDto
@@ -9,6 +12,8 @@ import com.uqpay.sdk.network.PaymentIntentDto
 import com.uqpay.sdk.payment.PaymentMethodType
 import com.uqpay.sdk.payment.PaymentStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.math.BigDecimal
@@ -16,10 +21,11 @@ import java.math.BigDecimal
 /**
  * The shared payload builder. One payment, one description — and none of iOS's defects.
  */
+@RunWith(RobolectricTestRunner::class)
 class ReconciledOutcomeTest {
 
-    private val sandbox = ErrorMapper(Environment.SANDBOX)
-    private val production = ErrorMapper(Environment.PRODUCTION)
+    private val sandbox = ErrorMapper(Environment.SANDBOX, testErrorCopy())
+    private val production = ErrorMapper(Environment.PRODUCTION, testErrorCopy())
 
     @Test
     fun `empty failure code and message normalise to null`() {
@@ -104,10 +110,16 @@ class ReconciledOutcomeTest {
         val error = ReconciledOutcome.failureError(declined, sandbox)
         assertEquals(UQPayErrorCode.INSUFFICIENT_FUNDS, error.code)
         assertEquals("insufficient_funds", error.declineCode)
-        assertEquals("The card was declined for insufficient funds. (Not enough)", error.message)
+        // The customer's sentence is the same in both environments and never quotes the
+        // gateway. The gateway's own words go to the developer sentence, in sandbox only.
+        assertEquals("The card was declined for insufficient funds.", error.message)
+        assertTrue(error.developerMessage.orEmpty().contains("Not enough"))
+        assertTrue(error.developerMessage.orEmpty().contains("insufficient_funds"))
 
-        // Production: no gateway text at all.
-        assertEquals("The card was declined for insufficient funds.", ReconciledOutcome.failureError(declined, production).message)
+        // Production: no gateway text at all, in either sentence.
+        val inProduction = ReconciledOutcome.failureError(declined, production)
+        assertEquals("The card was declined for insufficient funds.", inProduction.message)
+        assertFalse(inProduction.developerMessage.orEmpty().contains("Not enough"))
 
         // Empty code → CARD_DECLINED and no decline code; a cancelled intent → CANCELLED.
         val blank = ReconciledOutcome.failureError(intent(status = "FAILED", failureCode = ""), production)

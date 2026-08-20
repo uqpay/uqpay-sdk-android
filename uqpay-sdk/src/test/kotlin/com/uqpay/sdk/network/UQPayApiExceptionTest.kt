@@ -69,6 +69,35 @@ class UQPayApiExceptionTest {
         }
     }
 
+    /**
+     * **A redirect proves nothing about what the origin did with the body (audit item 15).**
+     *
+     * Redirects are deliberately not followed (`DefaultConnectionFactory`), so a 3xx surfaces
+     * here as a non-2xx. Classified as definitive, it released the idempotency pin and was
+     * reported as `FAILED` — for a confirm that an edge may well have handed on to a backend
+     * that processed it. The customer is told the payment failed, taps Pay again, and the
+     * second attempt mints a *fresh* key against a payment that may already be authorising.
+     */
+    @Test
+    fun `a 3xx is an unknown outcome - the origin may still have processed the body`() {
+        listOf(300, 301, 302, 303, 307, 308, 399).forEach { status ->
+            assertTrue("HTTP $status", apiError(status).isOutcomeUnknown)
+            assertTrue("HTTP $status", UQPayApiException.UnexpectedStatus(status, null).isOutcomeUnknown)
+        }
+    }
+
+    /** The classification is one rule, in one place, for both exception shapes. */
+    @Test
+    fun `the unknown-outcome status rule covers 3xx, 429 and anything at or above 500`() {
+        listOf(300, 399, 429, 500, 599).forEach { status ->
+            assertTrue("HTTP $status", UQPayApiException.isUnknownOutcomeStatus(status))
+        }
+        // Everything a gateway can say that is a *decision* about the request stays definitive.
+        listOf(200, 201, 400, 401, 404, 422, 428).forEach { status ->
+            assertFalse("HTTP $status", UQPayApiException.isUnknownOutcomeStatus(status))
+        }
+    }
+
     @Test
     fun `a local cancellation is neither unknown nor retryable`() {
         val cancelled = UQPayApiException.Cancelled()

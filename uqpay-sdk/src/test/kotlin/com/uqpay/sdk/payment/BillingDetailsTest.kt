@@ -146,6 +146,102 @@ class BillingDetailsTest {
         assertTrue(rendered.contains("PI_1"))
     }
 
+    // ---- the builder names what it sets -----------------------------------------------------
+    //
+    // The constructor takes ten String? in a row, six of them address lines. From Java there
+    // are no named arguments, so `new BillingDetails(…, "Singapore", "Singapore", …)` with
+    // city and state transposed compiles clean and sends wrong AVS data on every payment
+    // forever. The builder is what makes the field name appear beside the value.
+
+    @Test
+    fun `the builder produces exactly what named arguments produce`() {
+        val built = PaymentSessionParams.BillingDetails.Builder()
+            .firstName("John")
+            .lastName("Tan")
+            .email("john.tan@example.com")
+            .phone("+6591234567")
+            .addressLine1("123 Orchard Road")
+            .addressLine2("#12-01")
+            .city("Singapore")
+            .state("Singapore")
+            .postalCode("238888")
+            .countryCode("SG")
+            .build()
+
+        assertEquals(full(), built)
+    }
+
+    @Test
+    fun `a builder with nothing set is the same as the no-argument constructor`() {
+        assertEquals(
+            PaymentSessionParams.BillingDetails(),
+            PaymentSessionParams.BillingDetails.Builder().build(),
+        )
+    }
+
+    @Test
+    fun `only what is named is set, and the rest stay absent`() {
+        val built = PaymentSessionParams.BillingDetails.Builder()
+            .city("Singapore")
+            .countryCode("SG")
+            .build()
+
+        assertEquals("Singapore", built.city)
+        assertEquals("SG", built.countryCode)
+        assertNull(built.state)
+        assertNull(built.firstName)
+        assertNull(built.email)
+    }
+
+    /**
+     * The transposition the builder exists to prevent, written out: `city` and `state` hold
+     * the same value in the Singapore case, so getting them the wrong way round is invisible
+     * there — but the builder makes the *intent* explicit at the call site, and a reviewer
+     * reading `.state("Singapore")` can see which field was meant.
+     */
+    @Test
+    fun `city and state are set independently, whatever their values`() {
+        val built = PaymentSessionParams.BillingDetails.Builder()
+            .city("Klang")
+            .state("Selangor")
+            .build()
+
+        assertEquals("Klang", built.city)
+        assertEquals("Selangor", built.state)
+    }
+
+    @Test
+    fun `setting a field twice keeps the last value`() {
+        val built = PaymentSessionParams.BillingDetails.Builder()
+            .city("Klang")
+            .city("Shah Alam")
+            .build()
+
+        assertEquals("Shah Alam", built.city)
+    }
+
+    @Test
+    fun `building twice gives equal but independent values`() {
+        val builder = PaymentSessionParams.BillingDetails.Builder().city("Klang")
+        val first = builder.build()
+        val second = builder.build()
+
+        assertEquals(first, second)
+        assertTrue("build() must not return the same instance twice", first !== second)
+    }
+
+    @Test
+    fun `a builder result redacts the customer's contact details in toString like any other`() {
+        val built = PaymentSessionParams.BillingDetails.Builder()
+            .email("john.tan@example.com")
+            .phone("+6591234567")
+            .build()
+
+        val rendered = built.toString()
+        assertFalse(rendered.contains("john.tan@example.com"))
+        assertFalse(rendered.contains("+6591234567"))
+    }
+
     private fun full(
         firstName: String? = "John",
         lastName: String? = "Tan",

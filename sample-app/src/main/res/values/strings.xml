@@ -18,6 +18,10 @@
 
     <string name="billing_note">Your saved billing details are sent to the payment sheet, so only the card number, expiry and security code need typing. Everything stays editable.</string>
 
+    <string name="java_checkout_button">Same checkout, in Java</string>
+    <string name="java_checkout_title">Java checkout</string>
+    <string name="java_checkout_note">The same payment, driven from a Java Activity instead of a Kotlin one. It exists so the SDK\'s Java interoperability is proven by something that actually launches a payment, not only by a unit test.</string>
+
     <string name="checkout_button">Checkout</string>
     <string name="checkout_working">Creating your order…</string>
 

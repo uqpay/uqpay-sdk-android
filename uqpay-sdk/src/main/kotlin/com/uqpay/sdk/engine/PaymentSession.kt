@@ -2,13 +2,14 @@ package com.uqpay.sdk.engine
 
 import androidx.annotation.VisibleForTesting
 import com.uqpay.sdk.UQPay
+import com.uqpay.sdk.error.ErrorCopy
 import com.uqpay.sdk.network.DefaultUQPayNetworkClient
 import com.uqpay.sdk.network.ErrorMapper
 import com.uqpay.sdk.network.TokenManager
 import com.uqpay.sdk.network.UQPayApiClient
 import com.uqpay.sdk.network.UQPayLogger
 import com.uqpay.sdk.network.UQPayNetworkClient
-import com.uqpay.sdk.store.PreferencesConfirmAttemptStore
+import com.uqpay.sdk.store.NoBackupConfirmAttemptStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -137,9 +138,28 @@ internal class PaymentSession private constructor(
 
     private val started = AtomicBoolean(false)
 
+    /**
+     * How many Activities are currently hosting this payment. See [attachHost].
+     *
+     * Read and written under [lock] together with [retiring], because "was that the last one"
+     * and "has the flow been declared over" have to be answered as one question.
+     */
+    private var hosts = 0
+
+    /** True once some host declared the flow finished for good. Guarded by [lock]. */
+    private var retiring = false
+
+    /** True once [retire] has run. Guarded by [lock]; makes retirement idempotent. */
+    private var retired = false
+
     /** Where the payment is; the same flow as [PaymentEngine.state], for convenience. */
     val state: StateFlow<EngineState>
         get() = engine.state
+
+    /** How many hosts are attached. Diagnostics and tests. */
+    @get:VisibleForTesting
+    val hostCount: Int
+        get() = synchronized(lock) { hosts }
 
     /**
      * Whether [startIfNeeded] has already loaded this session's engine. A recreated Activity
@@ -173,6 +193,63 @@ internal class PaymentSession private constructor(
     }
 
     /**
+     * Declares that an Activity is now hosting this payment. Balanced by [detachHost].
+     *
+     * ### Why a count, and not a flag
+     *
+     * A session is keyed by payment intent id, and **more than one Activity can legitimately
+     * hold the same key at the same time**: split-screen or two tasks showing the same order,
+     * a merchant that launches the sheet again while the first is still on screen, or simply
+     * the overlap between a new instance being created and the old one being destroyed.
+     *
+     * Before this count existed, the *first* of those hosts to be destroyed retired the shared
+     * scope. The second host was then holding an engine whose coroutines could not run: its
+     * confirm launched on a cancelled scope and returned nothing, back-press stayed blocked
+     * for the full ten seconds because the confirm it was waiting on could never resolve, and
+     * the payment settled `PENDING` for a confirm that never left the device. `PENDING` tells
+     * the merchant to wait for a webhook, and no webhook is ever coming for a request that was
+     * not sent — a permanently stuck order, which is the worst outcome this SDK can produce.
+     *
+     * Attaching is *not* what [obtain] does. Obtaining is a lookup — tests and diagnostics do
+     * it without hosting anything — while hosting is a claim on the session's lifetime that
+     * exactly one component makes: `UQPayPaymentActivity`, once per instance, balanced in
+     * `onDestroy`.
+     */
+    fun attachHost() {
+        synchronized(lock) { hosts++ }
+    }
+
+    /**
+     * The counterpart of [attachHost]: this host is gone.
+     *
+     * @param forGood true when the flow is over — the result has been delivered and no
+     *   Activity will come looking for this payment again. False for a *recreation*: a
+     *   configuration change, or a system-initiated destroy that a relaunch may recover from.
+     *   The distinction is the caller's, because only the caller can tell them apart, and it
+     *   is exactly the `isFinishing && !isChangingConfigurations` predicate.
+     *
+     * `forGood` evicts the session from the registry immediately, so a later launch for the
+     * same intent builds a fresh engine rather than adopting a finished one. The scope,
+     * though, is only ended when the **last** host has gone: another Activity may still be
+     * driving this very payment, and cancelling underneath it is the bug described in
+     * [attachHost].
+     */
+    fun detachHost(forGood: Boolean) {
+        val shouldRetire = synchronized(lock) {
+            if (hosts > 0) hosts--
+            if (forGood) {
+                if (sessions[paymentIntentId] === this) sessions.remove(paymentIntentId)
+                if (!retiring) {
+                    retiring = true
+                    orphans += this
+                }
+            }
+            retiring && hosts == 0 && !retired
+        }
+        if (shouldRetire) retire()
+    }
+
+    /**
      * Whether any coroutine of this payment is still running — an attempt in the air, a
      * detached reconciler, a load. Reads the scope's own job tree, which is the truth about
      * outstanding work; the engine's state is not, because a `Terminal(PENDING)` engine may
@@ -183,9 +260,19 @@ internal class PaymentSession private constructor(
 
     /**
      * Ends this session's work: immediately if there is none, otherwise when it finishes or
-     * when [orphanLifetimeMillis] elapses, whichever is first. Called by the registry only.
+     * when [orphanLifetimeMillis] elapses, whichever is first.
+     *
+     * Called once, by the last host to detach from a session that has been declared finished
+     * ([detachHost]) — or by [release] for a session with no hosts at all. The [retired] flag
+     * makes a second call a no-op rather than a second watchdog coroutine over a scope that
+     * is already cancelled.
      */
-    private fun retire(onRetired: () -> Unit) {
+    private fun retire() {
+        synchronized(lock) {
+            if (retired) return
+            retired = true
+        }
+        val onRetired = { synchronized(lock) { orphans -= this } }
         if (!hasLiveWork()) {
             scope.cancel(CancellationException("Payment session released"))
             onRetired()
@@ -280,12 +367,16 @@ internal class PaymentSession private constructor(
          * wallets, its latch bookkeeping). It never delivers a second result. When that work
          * finishes, or the bound elapses, the scope is cancelled and the session evicted.
          *
+         * **A session with hosts still attached is evicted but not ended.** The scope belongs
+         * to whoever is still driving the payment; see [attachHost]. `UQPayPaymentActivity`
+         * therefore calls [detachHost] rather than this, and reaches the same place when it is
+         * the last host — which is every ordinary payment.
+         *
          * Releasing an intent that has no session is a no-op.
          */
         fun release(paymentIntentId: String) {
-            val session = synchronized(lock) { sessions.remove(paymentIntentId) } ?: return
-            synchronized(lock) { orphans += session }
-            session.retire(onRetired = { synchronized(lock) { orphans -= session } })
+            val session = synchronized(lock) { sessions[paymentIntentId] } ?: return
+            session.detachHost(forGood = true)
         }
 
         /**
@@ -334,6 +425,7 @@ internal class PaymentSession private constructor(
          */
         private fun build(paymentIntentId: String, deps: SessionDependencies): PaymentSession {
             val configuration = UQPay.requireConfiguration()
+            val appContext = UQPay.requireAppContext()
             // F5: the one place `UQPayLogger.Logcat` is ever constructed. Merchants opt in
             // through the configuration; everything else in the process gets the discarding
             // logger, and no code path chooses a logger for itself.
@@ -345,7 +437,7 @@ internal class PaymentSession private constructor(
                 ?: DefaultUQPayNetworkClient(logger = logger, workContext = deps.workContext)
             val tokenManager = TokenManager(configuration.tokenProvider, deps.workContext)
             val apiClient = UQPayApiClient(configuration, networkClient, tokenManager, logger)
-            val errorMapper = ErrorMapper(configuration.environment)
+            val errorMapper = ErrorMapper(configuration.environment, ErrorCopy.from(appContext))
 
             // This intent's two seams onto the API: read it, confirm it.
             val intentSource = IntentSource.forIntent(apiClient, paymentIntentId)
@@ -390,7 +482,7 @@ internal class PaymentSession private constructor(
             sharedIdempotency?.let { return it }
             val appContext = UQPay.requireAppContext()
             return ConfirmIdempotency(
-                store = PreferencesConfirmAttemptStore(appContext, logger),
+                store = NoBackupConfirmAttemptStore(appContext, logger),
                 browserInfo = { DeviceInfo.currentDevice(appContext) },
                 ipAddress = { DeviceInfo.currentIpAddress() },
                 now = System::currentTimeMillis,

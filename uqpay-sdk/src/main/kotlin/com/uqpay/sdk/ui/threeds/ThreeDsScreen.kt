@@ -428,23 +428,74 @@ internal object ThreeDsReturnUrl {
     /**
      * True when [url] means the issuer's part is over.
      *
-     * Two rules, and the first is the one that fires in practice. A merchant return URL for
-     * a native app is a **custom scheme** (`uqpaysample://payment`), which a WebView cannot
-     * load at all — left alone it produces a blank error page and a customer stranded on a
-     * dead screen. Intercepting any non-`http(s)` scheme handles that, and needs no
-     * configuration to be right, which matters because the intent's `return_url` is not yet
-     * modelled on this SDK's DTO (reported to Slice 6).
+     * Two rules, and the first is the one that decides.
      *
-     * The second rule is prefix matching against whatever return URLs we were given. Blank
-     * entries are ignored — an empty prefix matches everything, which would end the step on
-     * the very first navigation.
+     * 1. **The configured return URL**, matched by prefix. Blank entries are ignored — an
+     *    empty prefix matches everything, which would end the step on the very first
+     *    navigation.
+     * 2. **A custom scheme**, as a fallback. A merchant return URL for a native app is
+     *    typically `uqpaysample://payment`, which a WebView cannot load at all — left alone it
+     *    produces a blank error page and a customer stranded on a dead screen. Recognising the
+     *    shape needs no configuration to be right, which matters when a merchant creates the
+     *    intent without a `return_url` at all.
+     *
+     * ### The schemes this must *not* claim
+     *
+     * Rule 2 used to read "any non-`http(s)` scheme", and that is too broad by a long way. An
+     * access control server is an ordinary web page: it can carry a `tel:` link to the bank's
+     * support line, a `mailto:`, or — in app-to-app authentication, which is now the common
+     * case — an `intent://` or bank-app deep link that is *part of* the challenge. Treating
+     * any of those as the return URL ends the browser step and destroys the WebView while the
+     * customer is mid-authentication, and the payment then runs out to `PENDING` because the
+     * challenge can never be completed.
+     *
+     * So the well-known device-handler and browser-internal schemes are excluded by name.
+     * The list is a *denylist* rather than an allowlist on purpose: a merchant's return scheme
+     * is arbitrary (`myshop-checkout://`, `com.acme.app://`) and cannot be enumerated, while
+     * the schemes a page uses to reach the device are few, stable and well known.
      */
     fun isEndOfBrowserStep(url: String, prefixes: List<String>): Boolean {
         if (url.isBlank()) return false
+        if (prefixes.any { it.isNotBlank() && url.startsWith(it) }) return true
         val scheme = url.substringBefore(':', missingDelimiterValue = "").lowercase()
-        if (scheme.isNotEmpty() && scheme != "http" && scheme != "https") return true
-        return prefixes.any { it.isNotBlank() && url.startsWith(it) }
+        if (scheme.isEmpty()) return false
+        return scheme !in WEB_SCHEMES && scheme !in DEVICE_HANDLER_SCHEMES
     }
+
+    /**
+     * True when [url] addresses the device or another app — a phone dialler, a mail client,
+     * a banking app — rather than a page to render.
+     *
+     * The WebView cannot load any of these: left to try, it replaces the challenge with an
+     * `ERR_UNKNOWN_URL_SCHEME` error page, which loses the authentication just as surely as
+     * tearing the view down. The client consumes them instead, so the challenge stays exactly
+     * where it was and an accidental tap costs nothing.
+     *
+     * **They are not launched**, and that is a deliberate limitation rather than an
+     * oversight: firing an arbitrary `intent://` from a page this SDK did not write, inside a
+     * merchant's process, is an outbound action on behalf of an untrusted origin. App-to-app
+     * authentication therefore does not complete in the bank's app today; issuers fall back to
+     * an in-page challenge, and the engine's poll settles the payment either way.
+     */
+    fun isDeviceHandlerUrl(url: String): Boolean {
+        if (url.isBlank()) return false
+        return url.substringBefore(':', missingDelimiterValue = "").lowercase() in DEVICE_HANDLER_SCHEMES
+    }
+
+    /** Schemes the WebView loads as content. Never the end of anything. */
+    private val WEB_SCHEMES: Set<String> = setOf("http", "https", "about", "data", "blob", "javascript", "file", "content")
+
+    /**
+     * Schemes that hand off to the device or another app rather than navigating.
+     *
+     * `intent` and `android-app` are the two that matter for money: they are how an issuer
+     * moves a customer into their banking app for app-to-app 3-D Secure. Ending the step there
+     * is precisely backwards — the authentication is *starting*, not finishing.
+     */
+    private val DEVICE_HANDLER_SCHEMES: Set<String> = setOf(
+        "tel", "callto", "sms", "smsto", "mms", "mailto", "geo", "maps",
+        "market", "intent", "android-app", "wtai", "bip", "whatsapp",
+    )
 }
 
 /**
@@ -475,12 +526,34 @@ internal class ThreeDsWebViewClient(
     private val onRendererGone: () -> Unit,
 ) : WebViewClient() {
 
+    /**
+     * Decides what a navigation means. Three answers, and only one of them ends the payment
+     * step.
+     *
+     * 1. **A device-handler URL** (`tel:`, `mailto:`, `intent:` …) is consumed and dropped.
+     *    See [ThreeDsReturnUrl.isDeviceHandlerUrl].
+     * 2. **A return URL in the main frame** is the end of the browser step.
+     * 3. **Anything else** — including a return URL reached in a *sub-frame* — is left to the
+     *    WebView, or consumed if it cannot be loaded.
+     *
+     * The main-frame test is what makes rule 2 safe. `shouldOverrideUrlLoading` fires for
+     * every frame, and an access control server routinely loads things in hidden iframes — a
+     * device-fingerprint form, an analytics beacon, occasionally the merchant's own return
+     * page. A sub-frame reaching the return URL is not the customer finishing the challenge,
+     * and acting on it destroys a WebView the customer is still typing an OTP into. The
+     * outcome is re-read from the API regardless, so the cost of *missing* an end-of-step
+     * signal is one poll interval; the cost of acting on a false one is the whole payment.
+     */
     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
         val url = request?.url?.toString().orEmpty()
+        if (ThreeDsReturnUrl.isDeviceHandlerUrl(url)) return true
         if (!ThreeDsReturnUrl.isEndOfBrowserStep(url, returnUrlPrefixes)) {
             onVisited(url)
             return false
         }
+        // A return URL that a sub-frame reached: consumed (the WebView could not load a custom
+        // scheme anyway) but emphatically not reported as the end of the step.
+        if (request?.isForMainFrame == false) return true
         onReachedReturnUrl()
         return true
     }

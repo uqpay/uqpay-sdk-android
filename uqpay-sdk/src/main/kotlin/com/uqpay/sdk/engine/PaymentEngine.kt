@@ -261,6 +261,18 @@ internal class PaymentEngine(
     private var lastIntent: PaymentIntentDto? = null
 
     /**
+     * The method of the last confirm this engine started, if any.
+     *
+     * Held for one purpose: an unexplained failure must not be described as a *card* decline
+     * when the customer paid with a wallet (see [ErrorMapper.mapSettledOutcome]). The intent's
+     * own `latest_payment_attempt.payment_method.type` answers that whenever the read carries
+     * an attempt; this is what the engine knows when it does not. A method name, never a
+     * payload — nothing card-derived is retained here.
+     */
+    @Volatile
+    private var lastMethodType: PaymentMethodType? = null
+
+    /**
      * True while a confirm request or its replay ladder is running. Slice 3 blocks back-press
      * while this is true; a forced [cancel] during it settles `PENDING`.
      */
@@ -489,9 +501,78 @@ internal class PaymentEngine(
                 it.cancel(CancellationException("Superseded by a newer confirm"))
             }
             inFlightDigest = digest
+            lastMethodType = methodType
             moveTo(EngineState.Confirming(methodType), thisGeneration)
             attemptJob = scope.launch { runAttempt(payload, thisGeneration) }
             return ConfirmAcceptance.STARTED
+        }
+    }
+
+    /**
+     * Watches an attempt **this engine did not send**, without confirming anything.
+     *
+     * ### The case this exists for
+     *
+     * A wallet is confirmed at most once per intent and method, for the life of the process
+     * ([WalletConfirmLatch]). A customer who leaves a live QR and comes back — settling
+     * `PENDING`, which keeps the latch — lands on a *fresh* session whose engine loaded the
+     * intent and offered the method list. Tapping the same wallet there is refused by the
+     * latch, correctly: a second confirm would open a second payable attempt.
+     *
+     * What the refusal used to leave behind was worse than the duplicate it prevented. With a
+     * QR already issued the screen drew it and **nobody polled it**: the customer paid, the
+     * intent succeeded, and this engine never looked, so the merchant heard `CANCELLED` for a
+     * payment that had been taken. With a confirm still on the wire the tap did nothing at
+     * all — no state change, no progress, no error — and the customer's only move was to tap
+     * again.
+     *
+     * So the engine takes over the watching half of an attempt whose *sending* half belongs to
+     * someone else. It claims a generation like any attempt, so [hasAttemptInAir] is true and
+     * leaving reports `PENDING` rather than `CANCELLED` — which is the honest answer while a
+     * live QR is outstanding — and its poll settles the payment exactly as a confirmed
+     * attempt's poll would.
+     *
+     * ### Why the poll's decline rule is relaxed here
+     *
+     * A confirmed attempt that finds the intent back at `REQUIRES_PAYMENT_METHOD` has died,
+     * and the engine reports that decline. An attempt this engine did not send has no such
+     * guarantee: `REQUIRES_PAYMENT_METHOD` is also what the intent reads while another
+     * session's confirm is still in the air, and before the gateway has recorded anything at
+     * all. Declaring a decline from it would fail a payment on the strength of a read taken
+     * too early. So the watch stops on that status only when the attempt row actually says
+     * `FAILED` (G4's own test), and otherwise keeps looking — see [watch].
+     *
+     * @param action what the customer already has in front of them, when it is known: the QR
+     *   the latch is holding. Null means "watch and see" — the state becomes
+     *   [EngineState.Polling] until the intent reveals an action or settles.
+     * @param methodType the method the existing attempt used, so an unexplained failure is
+     *   not described as a card decline. See [ErrorMapper.mapSettledOutcome].
+     * @return true if this engine is now watching. False when it is in no position to — not
+     *   loaded, already settled, or already driving an attempt of its own, which outranks a
+     *   remembered one.
+     */
+    fun watchExistingAttempt(action: NextAction? = null, methodType: PaymentMethodType? = null): Boolean {
+        synchronized(lock) {
+            if (settled.get()) return false
+            // Only from the method list. Every other live state already has an observer —
+            // this engine's own attempt — and replacing it with a watch of a remembered one
+            // would drop the very thing that is watching the payment.
+            val selecting = _state.value as? EngineState.SelectingMethod ?: return false
+            val intent = lastIntent ?: selecting.intent
+            val thisGeneration = generation.incrementAndGet()
+            if (methodType != null) lastMethodType = methodType
+            // Unreachable from `SelectingMethod`, which has no attempt of its own by
+            // construction. Kept so this method can never leave a second observer behind if
+            // some future state does reach it: the generation bump already makes an older job
+            // unable to settle, and this stops it spending network as well.
+            attemptJob?.cancel(CancellationException("Superseded by a watch of an existing attempt"))
+            logger.debug("Watching an existing attempt for this intent without confirming")
+            moveTo(
+                if (action != null) EngineState.RequiresAction(action, intent) else EngineState.Polling(intent),
+                thisGeneration,
+            )
+            attemptJob = scope.launch { watch(action, thisGeneration, stage = 0, unconfirmed = true) }
+            return true
         }
     }
 
@@ -538,8 +619,17 @@ internal class PaymentEngine(
      * @param stage how many customer-action stages this attempt has been through. A server
      *   that keeps changing its `next_action` is bounded by [MAX_ACTION_STAGES] rather than
      *   trusted forever.
+     * @param unconfirmed carried from [watchExistingAttempt]: this engine did not send the
+     *   attempt it is following. Cleared the moment an action appears — from then on there is
+     *   a live attempt on the wire that the *server* is reporting, which is the same evidence
+     *   a confirmed attempt provides.
      */
-    private suspend fun onIntent(intent: PaymentIntentDto, thisGeneration: Int, stage: Int) {
+    private suspend fun onIntent(
+        intent: PaymentIntentDto,
+        thisGeneration: Int,
+        stage: Int,
+        unconfirmed: Boolean = false,
+    ) {
         lastIntent = intent
         val status = IntentStatus.from(intent.intentStatus)
         when {
@@ -554,7 +644,7 @@ internal class PaymentEngine(
                 } else {
                     moveTo(EngineState.Polling(intent), thisGeneration)
                 }
-                watch(action, thisGeneration, stage)
+                watch(action, thisGeneration, stage, unconfirmed = unconfirmed && action == null)
             }
         }
     }
@@ -566,16 +656,29 @@ internal class PaymentEngine(
      * back to `REQUIRES_PAYMENT_METHOD` (a decline — G14 during 3-D Secure, G4 otherwise) or
      * when a *different* customer action appears (multi-stage 3-D Secure, G13). The poller
      * hands the intent back and this method decides what it meant.
+     *
+     * @param unconfirmed this engine did not send the attempt being watched
+     *   ([watchExistingAttempt]). It weakens exactly one rule: `REQUIRES_PAYMENT_METHOD` stops
+     *   the poll only when the latest attempt actually failed. For an attempt we sent, that
+     *   status is a decline by construction — there *was* an attempt and the intent no longer
+     *   has one. For an attempt we merely inherited, it is also what a not-yet-recorded
+     *   confirm looks like, and failing a payment on that reading is a false decline.
      */
-    private suspend fun watch(onScreen: NextAction?, thisGeneration: Int, stage: Int) {
+    private suspend fun watch(
+        onScreen: NextAction?,
+        thisGeneration: Int,
+        stage: Int,
+        unconfirmed: Boolean = false,
+    ) {
         // A stale or finished attempt spends no network.
         if (settled.get() || thisGeneration != generation.get()) return
 
         val budget = if (onScreen is NextAction.Qr) PollBudget.WalletQr else PollBudget.ThreeDs
         val earlyReturn = EarlyReturnCheck { intent ->
             val status = IntentStatus.from(intent.intentStatus)
-            status is IntentStatus.RequiresPaymentMethod ||
-                (status is IntentStatus.RequiresCustomerAction && actionKey(intent) != onScreen?.type)
+            val fellBack = status is IntentStatus.RequiresPaymentMethod &&
+                (!unconfirmed || isDecline(intent, status))
+            fellBack || (status is IntentStatus.RequiresCustomerAction && actionKey(intent) != onScreen?.type)
         }
 
         val outcome = try {
@@ -612,7 +715,7 @@ internal class PaymentEngine(
                         logger.error("next_action changed $stage times; giving up on this attempt as pending")
                         settle(EngineOutcome.Pending(timeoutError(), outcome.intent), thisGeneration)
                     }
-                    else -> onIntent(outcome.intent, thisGeneration, stage + 1)
+                    else -> onIntent(outcome.intent, thisGeneration, stage + 1, unconfirmed)
                 }
             }
         }
@@ -630,8 +733,10 @@ internal class PaymentEngine(
      */
     private fun settledOutcome(intent: PaymentIntentDto, status: IntentStatus): EngineOutcome = when (status) {
         is IntentStatus.Succeeded, is IntentStatus.RequiresCapture -> EngineOutcome.Succeeded(intent)
-        is IntentStatus.Failed, is IntentStatus.Cancelled ->
-            EngineOutcome.Failed(ReconciledOutcome.failureError(intent, errorMapper), intent)
+        is IntentStatus.Failed, is IntentStatus.Cancelled -> EngineOutcome.Failed(
+            ReconciledOutcome.failureError(intent, errorMapper, fallbackMethodType = lastMethodType),
+            intent,
+        )
         else -> EngineOutcome.Failed(notPayableError(), intent)
     }
 
@@ -647,7 +752,10 @@ internal class PaymentEngine(
      */
     private fun declineOutcome(intent: PaymentIntentDto, onScreen: NextAction?): EngineOutcome {
         val fallback = if (onScreen is NextAction.Redirect || onScreen is NextAction.Iframe) THREE_DS_FAILED_CODE else null
-        return EngineOutcome.Failed(ReconciledOutcome.failureError(intent, errorMapper, fallback), intent)
+        return EngineOutcome.Failed(
+            ReconciledOutcome.failureError(intent, errorMapper, fallback, fallbackMethodType = lastMethodType),
+            intent,
+        )
     }
 
     /**
@@ -658,12 +766,14 @@ internal class PaymentEngine(
 
     /**
      * `INTENT_NOT_PAYABLE` for a non-payable status that is neither paid nor dead. Unreachable
-     * with today's `IntentStatus`; built directly because [ErrorMapper] has no entry point for
-     * a code without an underlying failure, and the copy mirrors the mapper's fixed text.
+     * with today's `IntentStatus`, and routed through [ErrorMapper.forCode] rather than built
+     * here so the customer-facing sentence comes from resources like every other one — a
+     * literal here would be a sentence no translation could reach.
      */
-    private fun notPayableError(): UQPayError = UQPayError(
-        code = UQPayErrorCode.INTENT_NOT_PAYABLE,
-        message = "This payment has already been completed or cancelled.",
+    private fun notPayableError(): UQPayError = errorMapper.forCode(
+        UQPayErrorCode.INTENT_NOT_PAYABLE,
+        developerMessage = "The intent is in a status that cannot be paid and is neither " +
+            "succeeded nor failed. Read it on your backend before launching the sheet again.",
     )
 
     // ---- cancel ----------------------------------------------------------------------
@@ -714,11 +824,26 @@ internal class PaymentEngine(
      * which exactly one caller wins. Only the winner writes the state, so a `Terminal` can
      * never be overwritten and never appears twice.
      *
+     * ### Why this holds [lock] as well as the atomic latch
+     *
+     * The compare-and-set alone makes *settling* exactly-once, but it does not order this
+     * against [confirm], which reads `settled` and the current state and *then* launches an
+     * attempt. Without the lock those interleave: a confirm passes its checks, a poll settles
+     * `SUCCEEDED` microseconds later, and the confirm — already past the guard — launches a
+     * request for a payment the merchant has just been told is finished. `moveTo` refuses to
+     * repaint the `Terminal`, so nothing on screen betrays it; the confirm still goes out.
+     *
+     * Taking the lock closes that window in the only place it can be closed: the read-then-act
+     * sequences and the decision they read now serialise against each other. Every caller here
+     * is either already holding it ([cancel] — `synchronized` is reentrant) or is a coroutine
+     * that may block on it briefly; the lock is never held across a suspension point, so a
+     * brief block is all it can ever be.
+     *
      * @param generation the attempt this result belongs to, or null for results that belong
      *   to the session as a whole (load, cancel).
      * @return true if this call decided the payment.
      */
-    private fun settle(outcome: EngineOutcome, generation: Int?): Boolean {
+    private fun settle(outcome: EngineOutcome, generation: Int?): Boolean = synchronized(lock) {
         if (generation != null && generation != this.generation.get()) {
             dropped.incrementAndGet()
             logger.debug("Dropped a settle from a superseded attempt")

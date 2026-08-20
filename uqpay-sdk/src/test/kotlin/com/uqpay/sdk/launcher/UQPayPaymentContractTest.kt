@@ -1,5 +1,6 @@
 package com.uqpay.sdk.launcher
 
+import com.uqpay.sdk.testErrorCopy
 import android.app.Activity
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
@@ -22,7 +23,7 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class UQPayPaymentContractTest {
 
-    private val contract = UQPayPaymentContract()
+    private val contract = UQPayPaymentContract(testErrorCopy())
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
 
     @Test

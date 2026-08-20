@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -23,11 +24,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.uqpay.sdk.Environment
 import com.uqpay.sdk.R
+import com.uqpay.sdk.UQPay
 import com.uqpay.sdk.engine.ConfirmPayload
 import com.uqpay.sdk.payment.PaymentMethodType
 import com.uqpay.sdk.payment.PaymentSessionParams
@@ -37,17 +42,23 @@ import com.uqpay.sdk.ui.wallet.BankDetailsScreen
 import com.uqpay.sdk.ui.wallet.WalletQrRoute
 
 /**
- * The whole payment UI, one composable per [PaymentUiState] member. Plain and small on
- * purpose — Slices 4 (card form), 5 (QR) and 6 (polish) replace the placeholders; what must
- * already be right here is the *shape*: which states offer a way out and which do not.
+ * The whole payment UI, one composable per [PaymentUiState] member. What has to be right
+ * here is the *shape*: which states offer a way out and which do not, and what is drawn over
+ * all of them regardless.
  *
- * Accessibility baseline, kept from the first screen: Material 3 typography (scales with the
- * system font size), system dark mode via [UqpayTheme], and a content description on every
- * interactive element so a screen reader can name it.
+ * Two things sit outside the state branch, above every screen, because they are true of the
+ * sheet rather than of any one state: the **test-mode banner** (see [TestModeBanner]) and the
+ * IME inset, which is what keeps the Pay button reachable with the keyboard up.
+ *
+ * Accessibility baseline: Material 3 typography (scales with the customer's font-size
+ * setting), light/dark through [UqpayTheme] and the merchant's
+ * [com.uqpay.sdk.appearance.UQPayAppearance], and a content description on every interactive
+ * element so a screen reader can name it.
  *
  * @param onClose the close affordance on the method list — routed to the same back-press
  *   rule as the system back button, so there is one rule.
- * @param onCancel the explicit way out of a waiting state (M-3/M-4).
+ * @param onCancel the explicit way out of a waiting state: a customer with an attempt in the
+ *   air must always have one.
  * @param billingDetails the merchant's optional card-form prefill, taken straight from the
  *   launch params and handed to the card form. Null on every other screen's behalf — no
  *   other state has anything to prefill.
@@ -65,70 +76,135 @@ internal fun PaymentScreen(
     billingDetails: PaymentSessionParams.BillingDetails? = null,
 ) {
     Scaffold { padding ->
-        Surface(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            color = MaterialTheme.colorScheme.background,
+                .padding(padding)
+                // Keeps the Pay button reachable when the keyboard is up, in both of the
+                // regimes a host app can be in.
+                //
+                // The manifest asks for `adjustResize`, which is what a host that has not
+                // gone edge-to-edge gets: the window shrinks, the form's own scroll does the
+                // rest, and `WindowInsets.ime` is already zero here because the resize
+                // consumed it — so this adds nothing.
+                //
+                // A host targeting SDK 35 is edge-to-edge whether it asked to be or not, and
+                // there `adjustResize` no longer resizes anything: the IME simply draws over
+                // the bottom of the window, taking the Pay button with it on a short screen.
+                // This is what handles that case, and it is the only one of the two the
+                // manifest cannot express.
+                //
+                // The Scaffold above already accounts for the status and navigation bars; IME
+                // is not part of `systemBars`, which is why it needs saying separately.
+                .imePadding(),
         ) {
-            when (state) {
-                PaymentUiState.Loading -> ProgressContent(
-                    text = stringResource(R.string.uqpay_loading),
-                    contentDescription = stringResource(R.string.uqpay_cd_loading),
-                )
-                is PaymentUiState.MethodList -> MethodListContent(state, onMethodSelected, onClose)
-                // Slice 4: the real card form. The state member keeps its name so the
-                // ViewModel projection and its tests are untouched by this slice.
-                is PaymentUiState.CardPlaceholder -> CardForm(
-                    paymentIntentId = paymentIntentId,
-                    canReturnToList = state.canReturnToList,
-                    submitEnabled = true,
-                    onSubmit = onCardSubmitted,
-                    onReturnToList = onReturnToList,
-                    onCancel = onCancel,
-                    billingDetails = billingDetails,
-                )
-                is PaymentUiState.Confirming -> ConfirmingContent(state)
-                is PaymentUiState.AwaitingAction -> AwaitingActionContent(state, onCancel)
-                // Slice 4: 3-D Secure. The screen renders and reports; the engine, which is
-                // already polling, decides the outcome from the API and nothing else.
-                is PaymentUiState.ThreeDs -> ThreeDsScreen(
-                    content = state.content,
-                    // Scopes the 3DS browsing state this step creates to this payment, so
-                    // ending one payment cannot clear another's authentication.
-                    sessionKey = paymentIntentId,
-                    returnUrlPrefixes = state.returnUrlPrefixes,
-                    onReturnedFromChallenge = onThreeDsReturned,
-                    onCancel = onCancel,
-                )
-                // Slice 5: the wallet QR and the bank-transfer instructions.
-                is PaymentUiState.WalletQr -> WalletQrRoute(
-                    walletName = state.methodType?.let { methodDisplayName(it) }
-                        ?: stringResource(R.string.uqpay_method_wallet_generic),
-                    amount = state.amount,
-                    currency = state.currency,
-                    qrUrl = state.qrUrl,
-                    rawPayload = state.rawPayload,
-                    expiresAtEpochMillis = state.expiresAtEpochMillis,
-                    onCancel = onCancel,
-                )
-                is PaymentUiState.BankTransfer -> BankDetailsScreen(
-                    details = state.details,
-                    amount = state.amount,
-                    currency = state.currency,
-                    onCancel = onCancel,
-                )
-                PaymentUiState.Polling -> WaitingContent(
-                    title = stringResource(R.string.uqpay_polling),
-                    body = stringResource(R.string.uqpay_action_still_waiting),
-                    contentDescription = stringResource(R.string.uqpay_cd_polling),
-                    onCancel = onCancel,
-                )
-                // Terminal: the Activity is finishing. Nothing to tap, so nothing to draw
-                // but the last progress frame — a blank flash is worse than a spinner.
-                PaymentUiState.Finishing -> ProgressContent(text = "", contentDescription = null)
+            TestModeBanner()
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+            ) {
+                when (state) {
+                    PaymentUiState.Loading -> ProgressContent(
+                        text = stringResource(R.string.uqpay_loading),
+                        contentDescription = stringResource(R.string.uqpay_cd_loading),
+                    )
+                    is PaymentUiState.MethodList -> MethodListContent(state, onMethodSelected, onClose)
+                    // The state member is still named `CardPlaceholder` — it kept its name
+                    // when the real form replaced the placeholder, so the ViewModel's
+                    // projection and its tests were untouched by that change.
+                    is PaymentUiState.CardPlaceholder -> CardForm(
+                        paymentIntentId = paymentIntentId,
+                        canReturnToList = state.canReturnToList,
+                        submitEnabled = true,
+                        onSubmit = onCardSubmitted,
+                        onReturnToList = onReturnToList,
+                        onCancel = onCancel,
+                        billingDetails = billingDetails,
+                    )
+                    is PaymentUiState.Confirming -> ConfirmingContent(state)
+                    is PaymentUiState.AwaitingAction -> AwaitingActionContent(state, onCancel)
+                    // 3-D Secure. The screen renders and reports; the engine, which is already
+                    // polling, decides the outcome from the API and nothing else.
+                    is PaymentUiState.ThreeDs -> ThreeDsScreen(
+                        content = state.content,
+                        // Scopes the 3DS browsing state this step creates to this payment, so
+                        // ending one payment cannot clear another's authentication.
+                        sessionKey = paymentIntentId,
+                        returnUrlPrefixes = state.returnUrlPrefixes,
+                        onReturnedFromChallenge = onThreeDsReturned,
+                        onCancel = onCancel,
+                    )
+                    // The wallet QR and the bank-transfer instructions.
+                    is PaymentUiState.WalletQr -> WalletQrRoute(
+                        walletName = state.methodType?.let { methodDisplayName(it) }
+                            ?: stringResource(R.string.uqpay_method_wallet_generic),
+                        amount = state.amount,
+                        currency = state.currency,
+                        qrUrl = state.qrUrl,
+                        rawPayload = state.rawPayload,
+                        expiresAtEpochMillis = state.expiresAtEpochMillis,
+                        onCancel = onCancel,
+                    )
+                    is PaymentUiState.BankTransfer -> BankDetailsScreen(
+                        details = state.details,
+                        amount = state.amount,
+                        currency = state.currency,
+                        onCancel = onCancel,
+                    )
+                    PaymentUiState.Polling -> WaitingContent(
+                        title = stringResource(R.string.uqpay_polling),
+                        body = stringResource(R.string.uqpay_action_still_waiting),
+                        contentDescription = stringResource(R.string.uqpay_cd_polling),
+                        onCancel = onCancel,
+                    )
+                    // Terminal: the Activity is finishing. Nothing to tap, so nothing to draw
+                    // but the last progress frame — a blank flash is worse than a spinner.
+                    PaymentUiState.Finishing -> ProgressContent(text = "", contentDescription = null)
+                }
             }
         }
+    }
+}
+
+// ---- Test mode -----------------------------------------------------------------------------
+
+/**
+ * The sandbox badge, drawn above every screen of the sheet and nowhere in production.
+ *
+ * A sandbox payment sheet and a live one used to be pixel-identical. That is a real hazard
+ * rather than a cosmetic one: a screenshot in a bug report, a demo to a customer, a QA pass
+ * on a build someone had already flipped to production — nothing on the screen said which
+ * environment the money was in. Every comparable SDK marks it, and the sample app in this
+ * repo had a badge of its own, which is the wrong side of the boundary: it proved the
+ * *merchant* could draw one, not that the SDK does.
+ *
+ * Above the content rather than over it, so it can never cover a field, a QR code or the Pay
+ * button, and so it survives every state including the 3-D Secure WebView.
+ *
+ * Not themeable, and not suppressible by [com.uqpay.sdk.appearance.UQPayAppearance]. A badge
+ * a merchant can hide is a badge that is hidden in exactly the build where it mattered. It
+ * is also *only* ever shown for [Environment.SANDBOX] — an uninitialised SDK (a `@Preview`,
+ * a screenshot test) draws nothing, because claiming "test mode" without knowing is as
+ * misleading as claiming production.
+ */
+@Composable
+private fun TestModeBanner() {
+    if (UQPay.environmentOrNull() != Environment.SANDBOX) return
+    val description = stringResource(R.string.uqpay_cd_test_mode)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+    ) {
+        Text(
+            text = stringResource(R.string.uqpay_test_mode),
+            style = MaterialTheme.typography.labelLarge,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .semantics { contentDescription = description },
+        )
     }
 }
 
@@ -187,11 +263,9 @@ private fun MethodListContent(
                 Text(stringResource(R.string.uqpay_cancel))
             }
         }
-        val amount = state.amount
-        val currency = state.currency
-        if (amount != null && currency != null) {
+        rememberFormattedAmount(state.amount, state.currency)?.let { formattedAmount ->
             Text(
-                text = stringResource(R.string.uqpay_amount_format, currency, amount),
+                text = formattedAmount,
                 style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
@@ -293,6 +367,15 @@ private fun ConfirmingContent(state: PaymentUiState.Confirming) {
             ),
             style = MaterialTheme.typography.bodyLarge,
             textAlign = TextAlign.Center,
+            // The copy changes under the customer when they press back, and a *changed* text
+            // on screen is not an announcement: TalkBack reads what has focus, and focus is
+            // wherever it was. §2c requires the customer to be told why they cannot leave, and
+            // a rule satisfied for sighted users only is not satisfied. Assertive rather than
+            // Polite because it answers an action the customer just took, and because it is
+            // the only feedback that press produces — nothing moves, nothing closes.
+            modifier = Modifier.semantics {
+                if (state.leaveBlocked) liveRegion = LiveRegionMode.Assertive
+            },
         )
         if (state.leaveBlocked) {
             Spacer(Modifier.height(8.dp))
@@ -301,6 +384,9 @@ private fun ConfirmingContent(state: PaymentUiState.Confirming) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
+                // Polite: the hint elaborates on the sentence above, which has already
+                // interrupted. Two assertive regions would talk over each other.
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
         }
     }

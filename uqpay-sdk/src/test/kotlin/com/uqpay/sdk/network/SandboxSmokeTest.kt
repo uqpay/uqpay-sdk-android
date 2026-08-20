@@ -1,5 +1,8 @@
 package com.uqpay.sdk.network
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import com.uqpay.sdk.testErrorCopy
 import com.uqpay.sdk.Environment
 import com.uqpay.sdk.UQPayConfiguration
 import com.uqpay.sdk.auth.UQPayAuthToken
@@ -32,6 +35,7 @@ import java.io.File
  * Findings are written as structural facts only — status codes, enum values, and whether
  * a field was present.
  */
+@RunWith(RobolectricTestRunner::class)
 class SandboxSmokeTest {
 
     private val enabled = System.getenv("UQPAY_SMOKE") == "1"
@@ -86,7 +90,7 @@ class SandboxSmokeTest {
         assumeTrue("UQPAY_SMOKE not set", enabled)
         assumeTrue("credentials absent", clientId.isNotBlank() && token.isNotBlank())
 
-        val mapper = ErrorMapper(Environment.SANDBOX)
+        val mapper = ErrorMapper(Environment.SANDBOX, testErrorCopy())
         report("--- retrieveIntent with an unknown id ---")
         report("base URL: ${Environment.SANDBOX.baseUrl}")
 

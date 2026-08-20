@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The dark-device variant of the window theme. See values/themes.xml for why this exists
+  and what it is and is not responsible for: only the frame drawn before Compose does, and
+  only when the device itself is in dark mode. `UQPayAppearance.colorMode` still decides
+  what the sheet looks like, and UQPayPaymentActivity paints the configured background over
+  this one in onCreate.
+-->
+<resources>
+
+    <style name="Theme.UQPay.Payment" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowBackground">#FF1C1B1F</item>
+    </style>
+
+</resources>

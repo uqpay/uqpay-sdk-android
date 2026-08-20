@@ -1,8 +1,12 @@
 package com.uqpay.sdk.network
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import com.uqpay.sdk.testErrorCopy
 import com.uqpay.sdk.Environment
 import com.uqpay.sdk.error.UQPayError
 import com.uqpay.sdk.error.UQPayErrorCode
+import com.uqpay.sdk.payment.PaymentMethodType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -17,10 +21,11 @@ import java.io.IOException
  * code must never be flattened into a decline — telling a merchant a card was refused
  * when the request was merely malformed is a bug that shipped on another platform.
  */
+@RunWith(RobolectricTestRunner::class)
 class ErrorMapperTest {
 
-    private val production = ErrorMapper(Environment.PRODUCTION)
-    private val sandbox = ErrorMapper(Environment.SANDBOX)
+    private val production = ErrorMapper(Environment.PRODUCTION, testErrorCopy())
+    private val sandbox = ErrorMapper(Environment.SANDBOX, testErrorCopy())
 
     private fun apiError(
         code: String? = null,
@@ -284,27 +289,89 @@ class ErrorMapperTest {
     }
 
     @Test
-    fun `any other settled failure code maps to card declined`() {
+    fun `any other settled failure code on a card maps to card declined`() {
         listOf("do_not_honor", "issuer_unavailable", "fraud_suspected", "something_new")
             .forEach { failureCode ->
                 assertEquals(
                     failureCode,
                     UQPayErrorCode.CARD_DECLINED,
-                    production.mapSettledOutcome(IntentStatus.Failed, failureCode).code,
+                    production.mapSettledOutcome(
+                        IntentStatus.Failed,
+                        failureCode,
+                        methodType = PaymentMethodType.CARD,
+                    ).code,
                 )
             }
     }
 
     @Test
-    fun `a null or blank settled failure code still maps to card declined`() {
+    fun `a null or blank settled failure code on a card still maps to card declined`() {
         // G5 again: "" must behave exactly like a missing field.
         assertEquals(
             UQPayErrorCode.CARD_DECLINED,
-            production.mapSettledOutcome(IntentStatus.Failed, null).code,
+            production.mapSettledOutcome(IntentStatus.Failed, null, methodType = PaymentMethodType.CARD).code,
         )
-        val blank = production.mapSettledOutcome(IntentStatus.Failed, "   ")
+        val blank = production.mapSettledOutcome(
+            IntentStatus.Failed,
+            "   ",
+            methodType = PaymentMethodType.CARD,
+        )
         assertEquals(UQPayErrorCode.CARD_DECLINED, blank.code)
         assertNull("a blank failure code must never surface as a decline code", blank.declineCode)
+    }
+
+    /**
+     * **`card_declined` is a claim about a card, and it may only be made about a card.**
+     *
+     * Its fixed copy says so out loud — "The card was declined. Please try a different payment
+     * method." — and the common way to reach the unexplained-failure branch is a wallet QR that
+     * expired unscanned. Telling a customer who never entered a card that their card was
+     * refused points them at a fix that does not exist, and files the failure under card
+     * declines in the merchant's analytics.
+     *
+     * A wallet, and an attempt whose method the intent never named, both get `UNKNOWN`, whose
+     * copy describes a failure the gateway declined to characterise. This is the *fallback*
+     * only: a code the gateway was explicit about is honoured whatever the method — see below.
+     */
+    @Test
+    fun `an unexplained wallet failure is never reported as a card decline`() {
+        listOf(PaymentMethodType.GRABPAY, PaymentMethodType.PAYNOW, PaymentMethodType.ALIPAY_CN)
+            .forEach { wallet ->
+                assertEquals(
+                    "$wallet with no failure code",
+                    UQPayErrorCode.UNKNOWN,
+                    production.mapSettledOutcome(IntentStatus.Failed, null, methodType = wallet).code,
+                )
+                assertEquals(
+                    "$wallet with an unrecognised failure code",
+                    UQPayErrorCode.UNKNOWN,
+                    production.mapSettledOutcome(IntentStatus.Failed, "qr_expired", methodType = wallet).code,
+                )
+            }
+    }
+
+    /** An unnamed method is not evidence of a card either. */
+    @Test
+    fun `an unexplained failure with no method named is unknown, not a card decline`() {
+        assertEquals(
+            UQPayErrorCode.UNKNOWN,
+            production.mapSettledOutcome(IntentStatus.Failed, null).code,
+        )
+    }
+
+    /** A code the gateway *did* send outranks the method every time. */
+    @Test
+    fun `a recognised failure code is honoured whatever the method`() {
+        listOf(null, PaymentMethodType.CARD, PaymentMethodType.GRABPAY).forEach { method ->
+            assertEquals(
+                UQPayErrorCode.INSUFFICIENT_FUNDS,
+                production.mapSettledOutcome(IntentStatus.Failed, "insufficient_funds", methodType = method).code,
+            )
+            assertEquals(
+                UQPayErrorCode.THREE_DS_FAILED,
+                production.mapSettledOutcome(IntentStatus.Failed, "3ds_failed", methodType = method).code,
+            )
+        }
     }
 
     @Test
@@ -312,7 +379,11 @@ class ErrorMapperTest {
         // G4: REQUIRES_PAYMENT_METHOD after a failed attempt is a decline, not a prompt.
         assertEquals(
             UQPayErrorCode.CARD_DECLINED,
-            production.mapSettledOutcome(IntentStatus.RequiresPaymentMethod, "do_not_honor").code,
+            production.mapSettledOutcome(
+                IntentStatus.RequiresPaymentMethod,
+                "do_not_honor",
+                methodType = PaymentMethodType.CARD,
+            ).code,
         )
     }
 
@@ -358,11 +429,52 @@ class ErrorMapperTest {
         assertEquals("The payment could not be verified with your bank.", messages.first())
     }
 
+    /**
+     * Sandbox detail belongs to the **developer** sentence, and only to it.
+     *
+     * The gateway's own text used to be appended to `message` in sandbox, which made the one
+     * string a merchant is told to show a customer mean two different things depending on
+     * which environment the build pointed at. It now goes where it was always for: a log
+     * line. `message` is identical in both environments, which is the property that makes it
+     * safe to put on a screen.
+     */
     @Test
-    fun `sandbox appends the gateway detail so integrators can debug`() {
+    fun `sandbox puts the gateway detail in the developer message, never in the customer one`() {
         val mapped = sandbox.map(apiError("card_declined", message = "Do not honour"))
-        assertTrue(mapped.message.startsWith("The card was declined."))
-        assertTrue(mapped.message.contains("Do not honour"))
+
+        assertEquals("The card was declined. Please try a different payment method.", mapped.message)
+        assertFalse(mapped.message.contains("Do not honour"))
+
+        val developer = mapped.developerMessage.orEmpty()
+        assertTrue(developer.contains("Do not honour"))
+        assertTrue(developer.contains("card_declined"))
+    }
+
+    @Test
+    fun `production never puts the gateway detail in either sentence`() {
+        val mapped = production.map(apiError("card_declined", message = "Do not honour"))
+
+        assertFalse(mapped.message.contains("Do not honour"))
+        assertFalse(mapped.developerMessage.orEmpty().contains("Do not honour"))
+        // The developer sentence still exists and still says something useful.
+        assertTrue(mapped.developerMessage.orEmpty().contains("card_declined"))
+    }
+
+    /**
+     * The two failures an integrator hits most, and the two whose developer sentence is
+     * worth writing by hand: both are the merchant's own setup, and neither is anything the
+     * customer or their card did.
+     */
+    @Test
+    fun `the developer message names the merchant's own setup for configuration failures`() {
+        val notConfigured = production.map(UQPayApiException.NotConfigured("x"))
+        assertTrue(notConfigured.developerMessage.orEmpty().contains("UQPay.initialize"))
+
+        val unauthenticated = production.map(UQPayApiException.AuthenticationFailed("x"))
+        assertTrue(unauthenticated.developerMessage.orEmpty().contains("UQPayTokenProvider"))
+        // And the customer is told to contact the store, not to keep retrying a token they
+        // have no part in.
+        assertFalse(unauthenticated.message.contains("try again", ignoreCase = true))
     }
 
     @Test

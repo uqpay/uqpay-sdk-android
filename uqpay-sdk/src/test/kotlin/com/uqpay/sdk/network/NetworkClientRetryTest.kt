@@ -218,6 +218,66 @@ class NetworkClientRetryTest {
         }
     }
 
+    /**
+     * **A `Retry-After` is honoured, not obeyed (audit item 9).**
+     *
+     * The header is more informed than our backoff, so it wins inside a bound — and only
+     * inside it. Unbounded, a `Retry-After: 999999` on a 429 or a 5xx parks the coroutine for
+     * eleven and a half days, up to three times over, and nothing above this layer can
+     * interrupt it: a poll attempt simply never returns and a confirm's replay ladder never
+     * reaches its next rung. The customer sits on a spinner with a live payment.
+     */
+    @Test
+    fun `an absurd retry-after is clamped rather than obeyed`() = runTest {
+        listOf("999999", "86400", "60", "${Long.MAX_VALUE / 1000}").forEach { header ->
+            val factory = FakeConnectionFactory(
+                FakeReply.retryAfter(429, seconds = header),
+                FakeReply(status = 200),
+            )
+            val started = testScheduler.currentTime
+
+            client(factory).execute(get())
+
+            assertEquals(
+                "retry-after: $header",
+                DefaultUQPayNetworkClient.MAX_RETRY_AFTER_MILLIS,
+                testScheduler.currentTime - started,
+            )
+        }
+    }
+
+    /**
+     * The clamp is applied in seconds, before the multiply. `Long.MAX_VALUE` seconds times a
+     * thousand overflows to a *negative* delay — an immediate retry storm, which is the exact
+     * opposite of what the header asked for.
+     */
+    @Test
+    fun `a retry-after that would overflow does not become an immediate retry`() = runTest {
+        val factory = FakeConnectionFactory(
+            FakeReply.retryAfter(503, seconds = "${Long.MAX_VALUE}"),
+            FakeReply(status = 200),
+        )
+        val started = testScheduler.currentTime
+
+        client(factory).execute(get())
+
+        assertEquals(DefaultUQPayNetworkClient.MAX_RETRY_AFTER_MILLIS, testScheduler.currentTime - started)
+    }
+
+    /** A value inside the bound is still taken at face value. */
+    @Test
+    fun `a retry-after within the bound is honoured exactly`() = runTest {
+        val factory = FakeConnectionFactory(
+            FakeReply.retryAfter(429, seconds = "9"),
+            FakeReply(status = 200),
+        )
+        val started = testScheduler.currentTime
+
+        client(factory).execute(get())
+
+        assertEquals(9_000L, testScheduler.currentTime - started)
+    }
+
     @Test
     fun `retry-after is honoured on every retry it is sent on`() = runTest {
         val factory = FakeConnectionFactory(

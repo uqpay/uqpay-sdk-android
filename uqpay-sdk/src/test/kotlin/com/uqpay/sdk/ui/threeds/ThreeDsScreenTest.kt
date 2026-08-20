@@ -188,7 +188,49 @@ class ThreeDsScreenTest {
         // `uqpaysample://payment` at all, and left alone it renders an error page.
         assertTrue(ThreeDsReturnUrl.isEndOfBrowserStep("uqpaysample://payment", emptyList()))
         assertTrue(ThreeDsReturnUrl.isEndOfBrowserStep("myapp://return?p=succeeded", emptyList()))
-        assertTrue(ThreeDsReturnUrl.isEndOfBrowserStep("intent://x#Intent;end", emptyList()))
+        assertTrue(ThreeDsReturnUrl.isEndOfBrowserStep("com.acme.checkout://done", emptyList()))
+    }
+
+    /**
+     * **The schemes the return-URL rule must not claim (audit item 18).**
+     *
+     * "Any non-http(s) scheme is the merchant's return URL" was too broad by a long way. An
+     * access control server is an ordinary web page: it can carry a `tel:` link to the bank's
+     * support line, a `mailto:`, or — in app-to-app authentication, now the common case — an
+     * `intent://` deep link into the customer's banking app that is *part of* the challenge.
+     * Treating any of those as the return URL tore the WebView down mid-authentication, and
+     * the payment then ran out to `PENDING` for a card the customer was actively verifying.
+     *
+     * They are recognised as device handlers instead: consumed so the WebView never tries to
+     * load a scheme it cannot render, and reported to nobody.
+     */
+    @Test
+    fun `a device-handler scheme is neither the end of the step nor a page to load`() {
+        listOf(
+            "tel:+6598765432",
+            "mailto:support@issuer.example.invalid",
+            "sms:+6598765432",
+            "geo:1.29,103.85",
+            "market://details?id=com.bank.app",
+            "intent://pay#Intent;scheme=bankapp;end",
+            "android-app://com.bank.app",
+        ).forEach { url ->
+            assertFalse("$url must not end the 3-D Secure step", ThreeDsReturnUrl.isEndOfBrowserStep(url, emptyList()))
+            assertTrue("$url must be consumed rather than loaded", ThreeDsReturnUrl.isDeviceHandlerUrl(url))
+        }
+        // …and an ordinary page is not a device handler, so it still loads normally.
+        assertFalse(ThreeDsReturnUrl.isDeviceHandlerUrl(challengeUrl))
+        assertFalse(ThreeDsReturnUrl.isDeviceHandlerUrl("uqpaysample://payment"))
+    }
+
+    /**
+     * A configured return URL outranks the scheme rules. A merchant whose `return_url` really
+     * is a device-handler scheme is exotic, but their configuration is explicit and ours is a
+     * heuristic; explicit wins.
+     */
+    @Test
+    fun `a configured prefix still ends the step whatever its scheme`() {
+        assertTrue(ThreeDsReturnUrl.isEndOfBrowserStep("intent://return#Intent;end", listOf("intent://return")))
     }
 
     @Test

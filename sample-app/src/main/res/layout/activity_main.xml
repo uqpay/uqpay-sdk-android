@@ -160,6 +160,13 @@
             android:layout_height="wrap_content"
             android:text="@string/checkout_button" />
 
+        <Button
+            android:id="@+id/btn_java_checkout"
+            style="?attr/borderlessButtonStyle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/java_checkout_button" />
+
         <ProgressBar
             android:id="@+id/progress"
             style="?android:attr/progressBarStyleHorizontal"

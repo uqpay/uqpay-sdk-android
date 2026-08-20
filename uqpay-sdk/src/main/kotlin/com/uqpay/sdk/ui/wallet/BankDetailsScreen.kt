@@ -27,6 +27,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.uqpay.sdk.R
+import com.uqpay.sdk.ui.rememberFormattedAmount
 
 /**
  * Bank-transfer instructions, as the gateway sent them.
@@ -115,10 +116,10 @@ internal fun BankDetailsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center,
             )
-            if (amount != null && currency != null) {
+            rememberFormattedAmount(amount, currency)?.let { formattedAmount ->
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = stringResource(R.string.uqpay_amount_format, currency, amount),
+                    text = formattedAmount,
                     style = MaterialTheme.typography.headlineMedium,
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Center,

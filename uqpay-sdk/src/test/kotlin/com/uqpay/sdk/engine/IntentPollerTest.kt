@@ -8,6 +8,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -177,6 +178,75 @@ class IntentPollerTest {
         val outcome = drive(poller(source, PollBudget(2, 2_000L), clock), clock)
 
         assertTrue("a settled payment beats any held error", outcome is PollOutcome.Settled)
+    }
+
+    // ---- The per-attempt ceiling (audit item 13) --------------------------------------
+
+    /**
+     * **A read is not one request, and until this bound existed nothing timed it.**
+     *
+     * Underneath `source.retrieve()` the network client retries a safe GET three times with
+     * 2s/4s/8s backoff, each retry carrying its own 30s connect and read timeouts and each
+     * able to honour a `Retry-After`. One flaky read could therefore occupy well over a minute
+     * while spending a *single* attempt — so a `WalletQr` budget of 300 attempts, sized for ten
+     * minutes, could span hours on a degraded network with a customer watching a QR that
+     * appears to be unwatched.
+     *
+     * The ceiling bounds the read and nothing else. Note what this test asserts about the
+     * poll: the abandoned attempt is **held as a failure and the loop continues** — the very
+     * next read settles the payment. A ceiling that ended the poll would be a wall-clock
+     * deadline in disguise, which is the iOS bug this whole file is built to avoid.
+     */
+    @Test
+    fun `a read that outlasts its ceiling is abandoned and held, and the poll continues`() = runTest {
+        val clock = FakeClock()
+        var calls = 0
+        val source = IntentSource {
+            calls++
+            // The first read never comes back; every later one answers at once.
+            if (calls == 1) delay(STUCK_READ_MILLIS)
+            if (calls >= 2) settled("SUCCEEDED") else stillWaiting()
+        }
+        val budget = PollBudget(5, 2_000L, attemptCeilingMillis = 30_000L)
+
+        val outcome = driveWithCeiling(async { poller(source, budget, clock).poll() }, clock)
+
+        assertTrue("the stuck read must not have decided the payment", outcome is PollOutcome.Settled)
+        assertEquals(IntentStatus.Succeeded, (outcome as PollOutcome.Settled).status)
+        assertEquals("the abandoned read cost exactly one attempt", 2, calls)
+    }
+
+    /**
+     * An abandoned read is reported as a held [UQPayApiException.TimedOut] if the run then
+     * ends unresolved — "your reads were timing out" is a materially better thing to tell a
+     * support engineer than "we ran out of attempts".
+     */
+    @Test
+    fun `an abandoned read is held as a timeout, not swallowed`() = runTest {
+        val clock = FakeClock()
+        val source = IntentSource {
+            delay(STUCK_READ_MILLIS)
+            stillWaiting()
+        }
+        val budget = PollBudget(1, 2_000L, attemptCeilingMillis = 30_000L)
+
+        val outcome = driveWithCeiling(async { poller(source, budget, clock).poll() }, clock)
+
+        val unresolved = outcome as PollOutcome.Unresolved
+        assertTrue("the held error names the reason", unresolved.heldError is UQPayApiException.TimedOut)
+        assertEquals(2, unresolved.attemptsMade)
+    }
+
+    /** A ceiling of zero or less means no ceiling at all: the read is left alone. */
+    @Test
+    fun `a ceiling of zero leaves the read untimed`() = runTest {
+        val clock = FakeClock()
+        val source = RecordingSource { settled("SUCCEEDED") }
+
+        val outcome = drive(poller(source, PollBudget(2, 2_000L, attemptCeilingMillis = 0L), clock), clock)
+
+        assertTrue(outcome is PollOutcome.Settled)
+        assertEquals(1, source.calls)
     }
 
     // ---- Pathological budgets ---------------------------------------------------------
@@ -566,6 +636,30 @@ class IntentPollerTest {
     private suspend fun TestScope.drive(poller: IntentPoller, clock: FakeClock): PollOutcome =
         driveToCompletion(async { poller.poll() }, clock)
 
+    /**
+     * Drives a poll whose reads park on the **coroutine** clock rather than the injected
+     * [FakeClock].
+     *
+     * Two clocks are in play and that is deliberate: the poller's own waits are the injected
+     * one (so a 300-attempt budget costs microseconds), while the per-attempt ceiling is an
+     * ordinary `withTimeoutOrNull` on the coroutine scheduler — the same scheduler the real
+     * network client's timeouts would use. When nothing is sleeping on the fake clock, a read
+     * is in flight, and the only thing that can move is virtual time.
+     */
+    private suspend fun TestScope.driveWithCeiling(
+        running: Deferred<PollOutcome>,
+        clock: FakeClock,
+    ): PollOutcome {
+        var iterations = 0
+        while (!running.isCompleted) {
+            runCurrent()
+            if (running.isCompleted) break
+            if (!clock.advanceToNextWake()) testScheduler.advanceTimeBy(CEILING_STEP_MILLIS)
+            if (iterations++ > 1_000) fail("the poll did not terminate")
+        }
+        return running.await()
+    }
+
     private suspend fun TestScope.driveToCompletion(
         running: Deferred<PollOutcome>,
         clock: FakeClock,
@@ -649,4 +743,13 @@ class IntentPollerTest {
 
     /** Stands in for an `OutOfMemoryError` without the collateral damage of allocating one. */
     private class FakeVmError : Error("simulated VM error")
+
+    private companion object {
+
+        /** Longer than any ceiling under test: a read that is, for the test's purposes, stuck. */
+        const val STUCK_READ_MILLIS = 10 * 60_000L
+
+        /** How far [driveWithCeiling] moves virtual time when a read is in flight. */
+        const val CEILING_STEP_MILLIS = 5_000L
+    }
 }

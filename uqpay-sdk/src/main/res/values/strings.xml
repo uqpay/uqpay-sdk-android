@@ -1,20 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Every customer-facing string of the payment UI. Nothing in Kotlin may hardcode UI text:
-  strings live here so they can be localised without touching code (English only in V1),
-  and so a reviewer can read the whole customer-visible vocabulary in one place.
+  Every customer-facing string of the payment UI, including the sentences that reach a
+  merchant through UQPayError.message. Nothing in Kotlin may hardcode text a customer can
+  read: it lives here so it can be translated without an API change, and so a reviewer can
+  read the whole customer-visible vocabulary in one place.
+
+  The SDK ships English only. A merchant who needs another language declares the same
+  resource names in their own app under values-<language>/ — app resources win over library
+  resources during merging, so an override needs no SDK release. This is documented in
+  docs/integration-guide.md ("Localisation").
 
   Prefixed `uqpay_` because this is a library: resource names are merged into the host
   app's namespace, and an unprefixed `cancel` would collide with (or be silently overridden
-  by) a merchant's own string of the same name.
+  by) a merchant's own string of the same name. That prefix is also what makes the override
+  above safe to write.
 -->
 <resources>
 
     <!-- Screen chrome -->
     <string name="uqpay_title">Payment</string>
     <string name="uqpay_cd_close">Close payment</string>
-    <string name="uqpay_amount_format">%1$s %2$s</string>
     <string name="uqpay_order_format">Order %1$s</string>
+
+    <!--
+      Amount fallback only. Amounts are normally rendered with the platform's currency
+      formatter (see ui/AmountFormat.kt), which places the symbol, the grouping separators
+      and the number of decimals according to the customer's locale and the currency —
+      JPY has no decimals, and most of Europe does not use a dot. This pattern is used
+      only when the currency code is one the platform cannot resolve, where printing the
+      code beside the raw amount is the honest answer.
+    -->
+    <string name="uqpay_amount_fallback_format">%1$s %2$s</string>
+
+    <!--
+      Shown on every screen while the SDK is pointed at Environment.SANDBOX, and never in
+      production. Without it a sandbox screenshot and a live one are indistinguishable.
+    -->
+    <string name="uqpay_test_mode">TEST MODE — no real money will move</string>
+    <string name="uqpay_cd_test_mode">Test mode. This is a sandbox payment; no real money will move.</string>
 
     <!-- Loading -->
     <string name="uqpay_loading">Loading payment…</string>
@@ -41,12 +64,10 @@
     <string name="uqpay_method_tosspay">Toss Pay</string>
     <string name="uqpay_method_naverpay">Naver Pay</string>
 
-    <!-- Card (placeholder until the card form lands in Slice 4) -->
-    <string name="uqpay_card_placeholder">Card payments are coming soon.</string>
     <string name="uqpay_back_to_methods">Back to payment methods</string>
     <string name="uqpay_cd_back_to_methods">Back to payment methods</string>
 
-    <!-- Confirming (§2c: back-press is blocked here, and the customer must see why) -->
+    <!-- Confirming. Back-press is blocked here, and the customer must be told why. -->
     <string name="uqpay_confirming">Processing your payment…</string>
     <string name="uqpay_confirming_blocked">Confirming your payment. Please don\'t leave this screen.</string>
     <string name="uqpay_confirming_blocked_hint">This usually takes a few seconds.</string>
@@ -56,7 +77,7 @@
     <string name="uqpay_polling">Waiting for confirmation…</string>
     <string name="uqpay_cd_polling">Waiting for confirmation</string>
 
-    <!-- A next step this SDK version cannot yet show (Slices 4 and 5) -->
+    <!-- A next step this SDK version cannot render as its own screen -->
     <string name="uqpay_action_pending_title">Almost there</string>
     <string name="uqpay_action_qr">Scan the QR code to complete your payment.</string>
     <string name="uqpay_action_redirect">Complete the verification step to continue.</string>
@@ -64,14 +85,9 @@
     <string name="uqpay_action_unknown">Complete the payment in your banking or wallet app.</string>
     <string name="uqpay_action_still_waiting">We\'ll update as soon as the payment is confirmed.</string>
 
-    <!-- Leaving while an attempt is in the air (M-3 / M-4: a visible way out) -->
+    <!-- Leaving while an attempt is in the air: there must always be a visible way out. -->
     <string name="uqpay_cancel">Cancel</string>
     <string name="uqpay_cd_cancel">Cancel and leave this screen</string>
-
-    <!-- ==========================================================================
-         SLICE 5 — wallet QR + bank transfer. Appended as one block; Slice 4 appends
-         its own. Nothing above this line was changed.
-         ========================================================================== -->
 
     <!-- Wallet QR -->
     <string name="uqpay_wallet_qr_title">Pay with %1$s</string>
@@ -98,11 +114,6 @@
     <string name="uqpay_bank_unavailable">We can\'t show the transfer details here. Please check your payment instructions with the merchant.</string>
     <string name="uqpay_copy">Copy</string>
     <string name="uqpay_cd_copy_format">Copy %1$s</string>
-
-    <!-- ==========================================================================
-         SLICE 4 — card entry + 3-D Secure. Appended as one block; nothing above
-         this line was changed.
-         ========================================================================== -->
 
     <!-- Card form -->
     <string name="uqpay_card_title">Card details</string>
@@ -172,5 +183,39 @@
     <string name="uqpay_threeds_interrupted">Verification was interrupted. Checking with your bank…</string>
     <string name="uqpay_cd_threeds_interrupted">Verification was interrupted; checking with your bank</string>
     <string name="uqpay_cd_threeds_cancel">Cancel verification and leave this screen</string>
+
+    <!-- ==========================================================================
+         UQPayError.message — one sentence per UQPayErrorCode.
+
+         These are the sentences a merchant is invited to put in front of a customer,
+         so each is written for a customer: it says what happened and, where there is
+         one, what they can do about it. Anything a customer cannot act on — an
+         uninitialised SDK, a rejected merchant token, a malformed request — deliberately
+         reads as "we couldn't start this", because naming the merchant's bug to their
+         customer helps nobody. The technical sentence for those lives in
+         UQPayError.developerMessage, which is for logs and bug reports and must never be
+         shown to a customer.
+
+         Never tell a customer to "try again" for something retrying cannot fix. An
+         authentication failure is the merchant's backend token, and inviting a retry
+         loop there costs the customer their patience and the merchant the order.
+
+         Wording is a compatibility concern in only one direction: a merchant may branch
+         on UQPayErrorCode, never on the sentence. See docs/error-codes.md.
+         ========================================================================== -->
+    <string name="uqpay_error_not_initialized">This payment couldn\'t be started. Please contact the store for help.</string>
+    <string name="uqpay_error_invalid_configuration">This payment couldn\'t be started. Please contact the store for help.</string>
+    <string name="uqpay_error_invalid_request">This payment couldn\'t be started. Please contact the store for help.</string>
+    <string name="uqpay_error_invalid_payment_method">That payment method cannot be used for this payment.</string>
+    <string name="uqpay_error_network">The payment could not be completed because of a connection problem.</string>
+    <string name="uqpay_error_timeout">We are still waiting for confirmation of this payment.</string>
+    <string name="uqpay_error_authentication_failed">This payment couldn\'t be completed. Please contact the store for help.</string>
+    <string name="uqpay_error_card_declined">The card was declined. Please try a different payment method.</string>
+    <string name="uqpay_error_insufficient_funds">The card was declined for insufficient funds.</string>
+    <string name="uqpay_error_three_ds_failed">The payment could not be verified with your bank.</string>
+    <string name="uqpay_error_cancelled">The payment was cancelled.</string>
+    <string name="uqpay_error_intent_not_payable">This payment has already been completed or cancelled.</string>
+    <string name="uqpay_error_server">UQPAY could not process the payment. Please try again.</string>
+    <string name="uqpay_error_unknown">The payment could not be completed.</string>
 
 </resources>

@@ -6,8 +6,30 @@
     <application>
         <!--
           Internal payment Activity — launched only via UQPay.createPaymentLauncher.
-          Never exported. singleTop so a re-launch reuses the running instance instead of
-          stacking a second live payment.
+          Never exported.
+
+          launchMode is deliberately the default (standard), and this used to be singleTop.
+          The intent behind singleTop was "a re-launch should reuse the running instance
+          instead of stacking a second live payment", and it does — but reuse skips onCreate
+          entirely and delivers the new Intent to onNewIntent. With no onNewIntent handler the
+          second launch's parameters were simply discarded: the customer went on paying the
+          FIRST payment intent, while the merchant's second launch() sat waiting for a result
+          that could only ever describe the first one. Launch pi_A, launch pi_B, and pi_A's
+          outcome is what pi_B's callback is answered with — the wrong order marked paid.
+          That contradicted UQPayPaymentLauncher.launch's own contract ("each call starts a
+          fresh payment") and AC §7.1.
+
+          Under standard, each launch gets its own instance, its own launch parameters and its
+          own result — one delivery per launch, never a crossed one. What made stacking unsafe
+          was never the stacking: it was two Activities sharing one PaymentSession, where the
+          first to be destroyed retired the scope out from under the second. PaymentSession now
+          counts its hosts and ends the session when the last one leaves, so two instances of
+          the same payment share one engine, one confirm and one idempotency pin. A second
+          launch of the same intent therefore cannot become a second payment — the guarantee
+          singleTop was reached for, now held by the layer that owns it.
+
+          UQPayPaymentActivity.onNewIntent is kept as a backstop for anyone who reintroduces an
+          instance-reusing launch mode or an Intent flag.
 
           configChanges is deliberately narrow and is belt-and-braces, not the fix for B1.
           Handling rotation here keeps the 3-D Secure WebView itself alive, so the issuer's
@@ -21,13 +43,32 @@
           Only the four rotation/size qualifiers are claimed. uiMode, locale and fontScale are
           NOT: the sheet must still be recreated for dark mode, a language change and a font
           size change, because that is how it adapts to them.
+
+          android:label names the payment screen in the Recents switcher and in the
+          accessibility announcement made when the task comes forward. Without it Android
+          falls back to the host application's label, so a customer flicking through Recents
+          mid-payment saw the merchant's app name on a screen that is not the merchant's app.
+
+          android:windowSoftInputMode="adjustResize" is what keeps the Pay button reachable.
+          The card form is a scrolling column with the button below it; under the default
+          (`adjustPan` on most OEM configurations) the IME simply covers the bottom of the
+          window and, on a short screen, the customer cannot scroll to the button that
+          submits the payment. adjustResize gives the window the space above the keyboard and
+          the existing scroll does the rest.
+
+          android:theme is the SDK's own — see res/values/themes.xml. It replaced
+          Theme.AppCompat.DayNight.NoActionBar, which was the only reason androidx.appcompat
+          was ever a dependency of this SDK, and whose DayNight behaviour ignored a host app
+          that forces its own light or dark mode. That decision now belongs to
+          UQPayAppearance.colorMode.
         -->
         <activity
             android:name=".ui.UQPayPaymentActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:exported="false"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.AppCompat.DayNight.NoActionBar" />
+            android:label="@string/uqpay_title"
+            android:theme="@style/Theme.UQPay.Payment"
+            android:windowSoftInputMode="adjustResize" />
     </application>
 
 </manifest>

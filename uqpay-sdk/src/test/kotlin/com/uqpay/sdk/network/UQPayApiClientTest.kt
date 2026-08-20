@@ -1,5 +1,8 @@
 package com.uqpay.sdk.network
 
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import com.uqpay.sdk.testErrorCopy
 import com.uqpay.sdk.Environment
 import com.uqpay.sdk.UQPayConfiguration
 import com.uqpay.sdk.auth.UQPayAuthToken
@@ -20,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * confirm sent without the key that makes it safe to replay.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
 class UQPayApiClientTest {
 
     private class RecordingNetworkClient(private vararg val script: UQPayResponse) :
@@ -394,7 +398,7 @@ class UQPayApiClientTest {
                 client(network).confirmIntent("PI_1", confirmBody, idempotencyKey)
             }.exceptionOrNull() as UQPayApiException
 
-            val error = ErrorMapper(com.uqpay.sdk.Environment.PRODUCTION).map(thrown)
+            val error = ErrorMapper(com.uqpay.sdk.Environment.PRODUCTION, testErrorCopy()).map(thrown)
 
             assertEquals(com.uqpay.sdk.error.UQPayErrorCode.TIMEOUT, error.code)
             assertFalse(

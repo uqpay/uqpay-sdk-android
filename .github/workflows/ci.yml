@@ -96,10 +96,15 @@ jobs:
       - name: Assemble the sample app with R8 enabled
         run: ./gradlew :sample-app:assembleRelease --stacktrace
 
-      - name: Verify the ActivityResultContract survived shrinking
+      # Two assertions, because the previous single one — "the name appears somewhere in
+      # mapping.txt" — passes even when the class has been renamed, since the mapping
+      # records the *original* name on the left of every arrow. What actually has to hold is
+      # that the name is unchanged, which is an identity mapping: `a.b.C -> a.b.C:`.
+      - name: Verify the ActivityResultContract survived shrinking unrenamed
         run: |
           set -euo pipefail
           MAPPING=sample-app/build/outputs/mapping/release/mapping.txt
+          CONTRACT=com.uqpay.sdk.launcher.UQPayPaymentContract
           if [ ! -f "$MAPPING" ]; then
             echo "No R8 mapping produced — minification did not run." >&2
             exit 1
@@ -110,4 +115,29 @@ jobs:
             echo "silently lost in release builds." >&2
             exit 1
           fi
-          echo "UQPayPaymentContract survived R8."
+          if ! grep -qx "$CONTRACT -> $CONTRACT:" "$MAPPING"; then
+            echo "$CONTRACT was renamed by R8." >&2
+            echo "Its keep rule in uqpay-sdk/consumer-rules.pro is not taking effect;" >&2
+            echo "ActivityResultRegistry matches contracts across process death, so payment" >&2
+            echo "results would be silently lost in release builds." >&2
+            grep "UQPayPaymentContract" "$MAPPING" >&2 || true
+            exit 1
+          fi
+          echo "$CONTRACT survived R8 unrenamed."
+
+      # The keep rule above used to be `-keep class * extends ActivityResultContract`, which
+      # kept every contract in the merchant's app — androidx's own included — and no check
+      # noticed. This asserts the over-reach has not come back: androidx's contracts are not
+      # ours to keep, and if the SDK is the reason they are unshrinkable, that is a
+      # regression in someone else's build that we caused.
+      - name: Verify the SDK does not keep androidx's own contracts
+        run: |
+          set -euo pipefail
+          RULES=uqpay-sdk/consumer-rules.pro
+          if grep -qE '^\s*-keep[^#]*extends[[:space:]]+androidx\.activity\.result\.contract\.ActivityResultContract' "$RULES"; then
+            echo "$RULES keeps every ActivityResultContract subclass, not just ours." >&2
+            echo "That disables R8 optimisation of unrelated contracts in every merchant" >&2
+            echo "app. Name com.uqpay.sdk.launcher.UQPayPaymentContract explicitly." >&2
+            exit 1
+          fi
+          echo "Consumer keep rules are scoped to com.uqpay.sdk."

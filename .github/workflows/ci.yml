@@ -44,6 +44,11 @@ jobs:
       - name: Build the SDK
         run: ./gradlew :uqpay-sdk:assembleRelease --stacktrace
 
+      # AC 10.4. Prints the actual byte count on every run, so raising the ceiling in
+      # uqpay-sdk/build.gradle.kts is always an informed, deliberate commit.
+      - name: Check the AAR size against its recorded ceiling
+        run: ./gradlew :uqpay-sdk:checkAarSize --stacktrace
+
       - name: Build the sample app
         run: ./gradlew :sample-app:assembleDebug --stacktrace
 

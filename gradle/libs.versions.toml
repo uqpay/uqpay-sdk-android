@@ -1,8 +1,15 @@
 [versions]
 # SDK artifact version — single source of truth (see docs/release-process.md)
 uqpaySdk = "0.1.0-SNAPSHOT"
+# Maven coordinates. The group is the namespace UQPAY owns on Maven Central (verified under
+# the company Central Portal account) — the same one the Java server SDK publishes under.
+uqpaySdkGroup = "com.uqpay.sdk"
+uqpaySdkArtifact = "uqpay-sdk-android"
 
 agp = "8.7.3"
+# Publishing to the Central Portal (Maven Central). Wraps maven-publish + signing and talks
+# the Portal publisher API, which plain maven-publish cannot.
+mavenPublish = "0.33.0"
 kotlin = "2.1.0"
 compileSdk = "35"
 minSdk = "24"
@@ -115,3 +122,4 @@ kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", versi
 # Kotlin 2.x bundles the Compose compiler; its version is the Kotlin version by definition.
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 binary-compatibility-validator = { id = "org.jetbrains.kotlinx.binary-compatibility-validator", version.ref = "binaryCompatibility" }
+maven-publish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }

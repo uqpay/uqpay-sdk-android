@@ -1,8 +1,11 @@
+import com.vanniktech.maven.publish.AndroidSingleVariantLibrary
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.maven.publish)
 }
 
 android {
@@ -168,4 +171,73 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+}
+
+// Publishing (AC §11.3/§11.4) — docs/release-process.md is the operator's guide.
+//
+// Target: Maven Central via the Central Portal, under the `com.uqpay.sdk` namespace the
+// company account owns. Merchants therefore need no repository block — mavenCentral() is
+// in every Android project already. Coordinates live in gradle/libs.versions.toml.
+//
+// Credentials are never in this file. The plugin reads them from Gradle properties, which
+// CI supplies as environment variables:
+//   ORG_GRADLE_PROJECT_mavenCentralUsername / ORG_GRADLE_PROJECT_mavenCentralPassword
+//     — a Central Portal *user token* (not the account password).
+//   ORG_GRADLE_PROJECT_signingInMemoryKey / ORG_GRADLE_PROJECT_signingInMemoryKeyPassword
+//     — the ASCII-armoured GPG private key and its passphrase.
+// Signing is only wired up when a key is present, so `publishToMavenLocal` and every
+// ordinary build work on a developer machine with none of these set. Central rejects
+// unsigned release artifacts, so a remote publish without the key fails at upload, loudly.
+mavenPublishing {
+    coordinates(
+        groupId = libs.versions.uqpaySdkGroup.get(),
+        artifactId = libs.versions.uqpaySdkArtifact.get(),
+        version = libs.versions.uqpaySdk.get(),
+    )
+
+    configure(
+        AndroidSingleVariantLibrary(
+            variant = "release",
+            sourcesJar = true,
+            // Central requires a -javadoc jar to exist. Dokka is deliberately not a build
+            // dependency, so this yields an empty jar; the API reference merchants actually
+            // read is docs/api-reference.md.
+            publishJavadocJar = true,
+        ),
+    )
+
+    publishToMavenCentral(automaticRelease = false)
+
+    val hasSigningKey = providers.gradleProperty("signingInMemoryKey").isPresent ||
+        providers.gradleProperty("signing.keyId").isPresent
+    if (hasSigningKey) {
+        signAllPublications()
+    }
+
+    pom {
+        name.set("UQPAY SDK for Android")
+        description.set("Accept payments through UQPAY from an Android app.")
+        url.set("https://github.com/uqpay/uqpay-sdk-android")
+        inceptionYear.set("2026")
+        licenses {
+            license {
+                name.set("MIT License")
+                url.set("https://opensource.org/licenses/MIT")
+                distribution.set("repo")
+            }
+        }
+        developers {
+            developer {
+                id.set("uqpay")
+                name.set("UQPAY")
+                email.set("tech@uqpay.com")
+                url.set("https://www.uqpay.com")
+            }
+        }
+        scm {
+            url.set("https://github.com/uqpay/uqpay-sdk-android")
+            connection.set("scm:git:https://github.com/uqpay/uqpay-sdk-android.git")
+            developerConnection.set("scm:git:ssh://git@github.com/uqpay/uqpay-sdk-android.git")
+        }
+    }
 }

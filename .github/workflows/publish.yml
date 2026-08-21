@@ -1,0 +1,61 @@
+name: Publish to Maven Central
+
+# Publishes the SDK from a release tag. The upload stops at "validated" in the Central
+# Portal — a human reviews the deployment there and clicks Publish (docs/release-process.md).
+# Run manually (workflow_dispatch) only to publish a -SNAPSHOT or to retry a tag.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Sign and upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # The tag must match the catalog version, or the artifact says one thing and the
+      # release another.
+      - name: Check the tag matches gradle/libs.versions.toml
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          catalog=$(sed -n 's/^uqpaySdk = "\(.*\)"/\1/p' gradle/libs.versions.toml)
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$catalog" != "$tag" ]; then
+            echo "::error::Tag v$tag does not match uqpaySdk = $catalog in gradle/libs.versions.toml"
+            exit 1
+          fi
+
+      - name: Verify before publishing
+        run: ./gradlew apiCheck :uqpay-sdk:testDebugUnitTest :uqpay-sdk:checkAarSize --stacktrace
+
+      # Credentials reach Gradle only as ORG_GRADLE_PROJECT_* properties, which the build
+      # reads by name (uqpay-sdk/build.gradle.kts). Nothing is written to disk.
+      - name: Publish
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_PASSWORD }}
+        run: ./gradlew :uqpay-sdk:publishToMavenCentral --no-configuration-cache --stacktrace
+
+      - name: Next step
+        run: echo "Uploaded. Review and publish the deployment at https://central.sonatype.com/publishing/deployments"

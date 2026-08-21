@@ -22,7 +22,7 @@ Android Payment Gateway SDK for [UQPAY](https://uqpay.com).
 
 ## Modules
 
-- **`uqpay-sdk/`** — the SDK library (published as `com.uqpay:uqpay-sdk-android`)
+- **`uqpay-sdk/`** — the SDK library (published as `com.uqpay.sdk:uqpay-sdk-android`)
 - **`sample-app/`** — reference integration app
 - **`docs/`** — [integration guide](docs/integration-guide.md) ·
   [API reference](docs/api-reference.md) · [error codes](docs/error-codes.md) ·
@@ -47,7 +47,7 @@ Android Payment Gateway SDK for [UQPAY](https://uqpay.com).
 ## Contributing
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to raise a change, and
-[`CLAUDE.md`](CLAUDE.md) for project conventions, security rules, and the definition of
+`CLAUDE.md` (local, not tracked) for project conventions, security rules, and the definition of
 done. Every release must satisfy
 [`docs/acceptance-criteria.md`](docs/acceptance-criteria.md).
 

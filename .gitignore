@@ -21,18 +21,24 @@ local.properties
 secrets.*
 *.secret
 
-# docs/ is not tracked. It holds internal working notes (progress, planning, research
-# specs, audit reports) alongside the reference-SDK clones, and is treated as local
-# working material rather than repository content. Kept on disk, never committed.
+# docs/ — the merchant-facing docs (integration guide, API reference, error codes,
+# troubleshooting, etc.) are release deliverables (acceptance-criteria.md §12) and ARE
+# tracked. Only internal working material under docs/ is ignored: research specs, planning
+# and progress notes, audit reports, and the reference-SDK clones.
 #
-# Listed explicitly rather than relying on ~/.gitignore_global ignoring `docs/`
-# machine-wide, so the rule travels with the repo.
-#
-# NOTE: acceptance-criteria.md §12 lists the integration guide, API reference, error
-# codes, and troubleshooting docs as release deliverables, and CLAUDE.md requires
-# api-reference.md to change alongside any public API change. Both now depend on a
-# process outside this repository.
-docs/
+# `!docs/` exists because some developer machines ignore `docs/` in ~/.gitignore_global;
+# a repository rule outranks the global one, so the deliverables stay visible everywhere.
+!docs/
+docs/spec/
+docs/reference-sdks/
+docs/**/*-gaps.md
+docs/**/*-audit.md
+docs/**/*PROGRESS*.md
+docs/**/*STATUS*.md
+docs/**/*HANDOFF*.md
+docs/internal/
+docs/plans/
+docs/notes/
 
 # Agent/assistant instructions — local working material, not repository content.
 # Already covered by ~/.gitignore_global, repeated here so the rule travels with the repo.

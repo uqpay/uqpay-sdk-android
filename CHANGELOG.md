@@ -18,6 +18,14 @@ devices, a LeakCanary run on the sample app, CI actually executing, and Maven pu
 credentials.
 
 ### Added
+- **Maven Central publishing.** The SDK publishes as `com.uqpay.sdk:uqpay-sdk-android`
+  through the Central Portal, with a sources jar and GPG-signed artifacts, so merchants add
+  one `implementation(...)` line and no repository. Credentials come only from the
+  environment; `publishToMavenLocal` and `-PuqpaySdkFromMavenLocal=true` on the sample app
+  verify the artifact end to end before any remote publish (`docs/release-process.md`).
+- **The merchant-facing docs are in the repository.** Integration guide, API reference,
+  error codes, testing, webhooks, troubleshooting, architecture, acceptance criteria and the
+  release process are tracked; only internal working material under `docs/` is ignored.
 - **`UQPayAppearance`** — the payment sheet in your app's colours. Set once on
   `UQPayConfiguration`; applies to every screen the SDK draws. Ten Material 3 colour roles per
   mode as plain ARGB ints (no Compose type reaches the public API), an explicit

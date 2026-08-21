@@ -100,7 +100,18 @@ android {
 }
 
 dependencies {
-    implementation(project(":uqpay-sdk"))
+    // Day to day the sample builds against the module, so SDK edits show up immediately.
+    // `./gradlew :sample-app:assembleDebug -PuqpaySdkFromMavenLocal=true` builds against the
+    // *published* artifact in ~/.m2 instead — the exact coordinates a merchant types — to
+    // prove the AAR, its POM and its transitive dependencies resolve outside this repo.
+    // Run `./gradlew :uqpay-sdk:publishToMavenLocal` first. See docs/release-process.md.
+    if (providers.gradleProperty("uqpaySdkFromMavenLocal").orNull == "true") {
+        implementation(
+            "${libs.versions.uqpaySdkGroup.get()}:${libs.versions.uqpaySdkArtifact.get()}:${libs.versions.uqpaySdk.get()}",
+        )
+    } else {
+        implementation(project(":uqpay-sdk"))
+    }
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)

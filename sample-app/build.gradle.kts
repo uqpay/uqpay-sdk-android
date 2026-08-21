@@ -106,4 +106,10 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(libs.androidx.activity.ktx)
+
+    // Acceptance criteria §10.2: "no memory leaks, verified with LeakCanary on the sample
+    // app". Debug-only and sample-only — it must never reach the SDK module or a release
+    // build. Watches every Activity/Fragment/ViewModel automatically; run a full payment
+    // (card + 3-DS, wallet QR, cancel, rotate mid-flow) and check the LeakCanary app.
+    debugImplementation(libs.leakcanary.android)
 }

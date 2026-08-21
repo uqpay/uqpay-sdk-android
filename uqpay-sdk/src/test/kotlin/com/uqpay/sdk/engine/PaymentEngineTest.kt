@@ -963,6 +963,37 @@ class PaymentEngineTest {
     }
 
     @Test
+    fun `redirect_to_url with a non-https url is Unknown, never a Redirect`() {
+        fun redirectTo(url: String) = NextAction.from(NextActionDto(type = "redirect_to_url", redirectToUrl = RedirectToUrlDto(url)))
+        // These would reach WebView.loadUrl with JavaScript enabled and no
+        // shouldOverrideUrlLoading in between; the engine must never carry them.
+        listOf(
+            "javascript:alert(document.cookie)",
+            "file:///sdcard/Download/x.html",
+            "data:text/html,<script>1</script>",
+            "http://acs.example/3ds",
+            "intent://acs.example/#Intent;scheme=https;end",
+            "about:blank",
+            "//acs.example/3ds",
+            "acs.example/3ds",
+            "https://",
+            "ht tps://acs.example/3ds",
+        ).forEach { url ->
+            assertTrue("'$url' must be Unknown", redirectTo(url) is NextAction.Unknown)
+        }
+        assertEquals(NextAction.Redirect("https://acs.example/3ds?x=1"), redirectTo("https://acs.example/3ds?x=1"))
+        assertEquals(NextAction.Redirect("HTTPS://acs.example/3ds"), redirectTo("HTTPS://acs.example/3ds"))
+    }
+
+    @Test
+    fun `display_qr_code with a non-https url is Unknown`() {
+        fun qr(url: String) = NextAction.from(NextActionDto(type = "display_qr_code", displayQrCode = DisplayQrCodeDto(qrCodeUrl = url)))
+        assertTrue(qr("http://qr.example/a.png") is NextAction.Unknown)
+        assertTrue(qr("javascript:1") is NextAction.Unknown)
+        assertTrue(qr("https://qr.example/a.png") is NextAction.Qr)
+    }
+
+    @Test
     fun `known action type with a missing payload is Unknown, not a blank redirect`() {
         assertTrue(NextAction.from(NextActionDto(type = "redirect_to_url", redirectToUrl = RedirectToUrlDto(url = ""))) is NextAction.Unknown)
         assertTrue(NextAction.from(NextActionDto(type = "display_qr_code")) is NextAction.Unknown)

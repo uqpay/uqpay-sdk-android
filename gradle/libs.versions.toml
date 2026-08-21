@@ -8,7 +8,26 @@ compileSdk = "35"
 minSdk = "24"
 targetSdk = "35"
 
-coreKtx = "1.15.0"
+# DEPENDENCY VERSIONS HERE ARE FLOORS, NOT PREFERENCES.
+#
+# Every version below is imposed on every merchant app that integrates this SDK, and each
+# androidx artifact carries a `minCompileSdk` that becomes a hard build requirement for
+# them. `androidx.core:core-ktx:1.15.0` requires compileSdk 35; at that version a merchant
+# app on compileSdk 34 — an app that simply has not been re-tooled in the last year —
+# cannot build at all, with an error that names androidx rather than us.
+#
+# So we declare the *lowest* version that does the job and let Gradle raise it: a merchant
+# already on core-ktx 1.15 or newer resolves to theirs (highest wins) and nothing changes
+# for them, while a merchant on 34 can still build. Picking "latest" here buys us nothing
+# and costs them their build.
+#
+# Measured minCompileSdk of what we depend on (2026-08-20):
+#   core-ktx 1.13.1 -> 34   ·   core-ktx 1.15.0 -> 35
+#   activity 1.9.3  -> 34   ·   lifecycle 2.8.7 -> 34   ·   Compose 1.7.6 -> 34
+# 34 is therefore the floor, and core-ktx was the only thing above it. The SDK does not
+# import androidx.core at all; it is declared so the floor is ours to choose rather than
+# whatever `activity` happens to depend on this month.
+coreKtx = "1.13.1"
 appcompat = "1.7.0"
 material = "1.12.0"
 activity = "1.9.3"
@@ -46,6 +65,7 @@ mockk = "1.13.13"
 turbine = "1.2.0"
 androidxTestCore = "1.6.1"
 archCoreTesting = "2.2.0"
+leakcanary = "2.14"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -83,6 +103,8 @@ mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
 turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }
 androidx-test-core-ktx = { group = "androidx.test", name = "core-ktx", version.ref = "androidxTestCore" }
 androidx-arch-core-testing = { group = "androidx.arch.core", name = "core-testing", version.ref = "archCoreTesting" }
+
+leakcanary-android = { group = "com.squareup.leakcanary", name = "leakcanary-android", version.ref = "leakcanary" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

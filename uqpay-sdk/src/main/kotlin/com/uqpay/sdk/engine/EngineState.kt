@@ -108,12 +108,20 @@ internal sealed class NextAction {
          *
          * Never throws. A known type with a missing payload is [Unknown], not the known
          * type with a blank field: a `Redirect("")` would send a WebView to nowhere.
+         *
+         * A known type with a URL that is not `https` is also [Unknown]. The redirect URL
+         * is handed to `WebView.loadUrl` with JavaScript enabled, and the *initial* load is
+         * not filtered by `shouldOverrideUrlLoading` — only later navigations are. So this
+         * is the one place that stands between a `javascript:`, `file:`, `data:` or
+         * cleartext `http:` URL from a compromised or misconfigured gateway and the WebView.
+         * The QR loader makes the same check again before it fetches; doing it here too
+         * means the engine never carries a URL the UI would have to distrust.
          */
         fun from(dto: NextActionDto?): NextAction? {
             if (dto == null) return null
-            val url = dto.redirectToUrl?.url?.takeIf { it.isNotBlank() }
+            val url = dto.redirectToUrl?.url?.takeIf(::isHttpsUrl)
             val html = dto.redirectIframe?.iframe?.takeIf { it.isNotBlank() }
-            val qrUrl = dto.displayQrCode?.qrCodeUrl?.takeIf { it.isNotBlank() }
+            val qrUrl = dto.displayQrCode?.qrCodeUrl?.takeIf(::isHttpsUrl)
             return when (dto.type?.trim()?.lowercase()) {
                 TYPE_REDIRECT -> url?.let(::Redirect) ?: Unknown(dto)
                 TYPE_IFRAME -> html?.let(::Iframe) ?: Unknown(dto)
@@ -121,6 +129,18 @@ internal sealed class NextAction {
                 TYPE_BANK_DETAILS -> BankDetails(dto)
                 else -> Unknown(dto)
             }
+        }
+
+        /**
+         * True only for a well-formed absolute URL whose scheme is `https`, compared
+         * case-insensitively. Blank, relative, malformed and every other scheme are false.
+         * `java.net.URI` rather than `URL` so an unregistered scheme such as `javascript:`
+         * is parsed and rejected instead of throwing.
+         */
+        private fun isHttpsUrl(value: String): Boolean {
+            if (value.isBlank()) return false
+            val uri = runCatching { java.net.URI(value.trim()) }.getOrNull() ?: return false
+            return uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrEmpty()
         }
     }
 }

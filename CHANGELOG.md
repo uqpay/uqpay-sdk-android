@@ -219,6 +219,17 @@ credentials.
   same time: it asserted only that the name appeared somewhere in `mapping.txt`, which passes
   even when the class has been renamed, and now asserts the identity mapping and that the
   over-broad rule has not come back.
+- **Dependency versions are declared as floors, not preferences — the SDK no longer forces
+  `compileSdk 35` on the merchant.** Every androidx artifact carries a hard `minCompileSdk`
+  that becomes the *merchant's* build error, naming androidx rather than us, and
+  `androidx.core:core-ktx:1.15.0` — pinned to "latest" out of habit, and **not imported
+  anywhere in the SDK** — required `compileSdk 35`. An app on `compileSdk 34` could not build
+  at all. Everything else we depend on (activity 1.9.3, lifecycle 2.8.7, Compose 1.7.6) was
+  already fine at 34, so lowering that one pin to 1.13.1 moves the floor to **`compileSdk 34`**
+  at no cost: Gradle resolves the highest version across the app, so a merchant already on
+  newer androidx keeps theirs. Verified in both directions — a `compileSdk 34` consumer builds,
+  and a consumer declaring `core-ktx:1.15.0` resolves up to it. The SDK's own AAR declares
+  `minCompileSdk=1`; it imposes nothing of its own.
 - **The dependency footprint is published.** Every runtime-scope dependency, its version and why
   it is there, plus the supported Compose floor (1.7 / Material3 1.3) — in the integration
   guide, next to a note that the AAR size figure excludes all of it.
@@ -251,6 +262,15 @@ credentials.
   documented as currently always null rather than as something to quote in support tickets.
 
 ### Fixed
+- **A `redirect_to_url` or `display_qr_code` `next_action` whose URL is not `https` is now
+  treated as an unrenderable action instead of being loaded.** The 3-D Secure redirect URL
+  is handed to `WebView.loadUrl` with JavaScript enabled, and `shouldOverrideUrlLoading`
+  filters only *later* navigations, never the initial load — so a `javascript:`, `file:`,
+  `data:` or cleartext `http:` URL from a compromised or misconfigured gateway went straight
+  into the WebView. The QR image loader already refused non-`https`; the redirect path did
+  not. The check now lives once, in the engine's `next_action` decoder, so neither screen
+  can receive a URL it would have to distrust. Defence in depth: exploiting it needed the
+  gateway itself to serve a hostile action.
 
 Pre-release code audit, second pass. Nothing below has shipped, so none of it is a
 regression for a merchant — but each was reachable in the code as it stood.

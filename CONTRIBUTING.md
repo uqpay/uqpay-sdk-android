@@ -12,7 +12,7 @@ shape before you spend time on it.
 
 - **Security vulnerabilities** — do not open an issue. Follow [`SECURITY.md`](SECURITY.md).
 - **Bugs** — open an issue and include what
-  [`docs/troubleshooting.md`](docs/troubleshooting.md) asks for: SDK version, Android
+  `docs/troubleshooting.md` asks for: SDK version, Android
   version, device model, `paymentIntentId`, `transactionId`, the `UQPayErrorCode`, and a
   Logcat capture of the `UQPay` tag taken with `loggingEnabled = true`.
 
@@ -77,7 +77,7 @@ The public surface is frozen in `uqpay-sdk/api/uqpay-sdk.api` and enforced by `a
 If your change alters it deliberately:
 
 1. Run `./gradlew apiDump` and commit the updated `.api` file in the same change.
-2. Update [`docs/api-reference.md`](docs/api-reference.md) in the same change.
+2. Update `docs/api-reference.md` in the same change.
 3. Note the compatibility impact. We follow [semantic versioning](https://semver.org/) —
    a breaking change to the public API is a major version bump.
 
@@ -109,7 +109,7 @@ Every payment outcome is delivered through `PaymentCallback` / `PaymentResult` w
 `PaymentStatus` of `SUCCESS`, `FAILED`, `CANCELLED`, or `TIMEOUT`. The SDK throws only for
 programmer errors, such as using it before initialisation. Errors carry a `UQPayError` with
 a stable `UQPayErrorCode`; codes are documented in
-[`docs/error-codes.md`](docs/error-codes.md) and are never renamed or renumbered once
+`docs/error-codes.md` and are never renamed or renumbered once
 released.
 
 ## Tests

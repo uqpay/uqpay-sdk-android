@@ -300,6 +300,12 @@ internal object ThreeDsWebView {
      * A real `https` origin, not `about:blank`. A document loaded with a null base gets an
      * **opaque origin**, and access control servers refuse the cross-origin submission that
      * follows — iOS carries the same constant for the same reason, discovered the same way.
+     *
+     * The bare domain deliberately has **no DNS record** (only `api-sandbox.uqpaytech.com`
+     * resolves), and nothing ever fetches it: `loadDataWithBaseURL` uses it purely as origin
+     * metadata. Do not "fix" it to a resolving host — that would change which cookies the
+     * fragment's origin can see, and would let an ACS page fetch relative sub-resources from
+     * a server this SDK never intended to involve in a challenge.
      */
     const val IFRAME_BASE_URL: String = "https://uqpaytech.com"
 

@@ -62,6 +62,39 @@ system with a separate reporting path; contact UQPAY directly rather than filing
 Also out of scope: reports that depend on a rooted or compromised device, on the host app
 deliberately misusing the public API, or on credentials the reporter already controls.
 
+## Network security and certificate pinning
+
+All SDK traffic is HTTPS, enforced by type in the network layer — there is no code path
+that can issue a cleartext request, and the SDK adds no `usesCleartextTraffic` or cleartext
+`network-security-config` entry to a merchant's app. A `next_action` redirect or QR URL that
+is not `https` is refused before it can reach the WebView or the image loader.
+
+**The SDK deliberately does not pin certificates.** It validates the server certificate
+against the host app's trust configuration — the Android system trust store — the same
+choice Stripe, Adyen and Airwallex make in their Android SDKs. This is a considered
+position, not an unfinished control:
+
+- **Pinning brings down apps in the field on rotation.** A pinned certificate that UQPAY
+  rotates — routinely, or in an emergency revocation — makes every shipped merchant app
+  fail *every* payment until each merchant releases an SDK update and every customer
+  installs it. For a payment SDK the customer feels that outage directly, at checkout, and
+  it is not something the merchant can fix from their side. The industry has live examples
+  of exactly this breakage.
+- **The threat pinning defends is already covered for most merchants.** Pinning guards
+  against a certificate mis-issued by a trusted CA, or a device that trusts an
+  attacker-added CA. On a normal (non-rooted) device the system trust store already rejects
+  the first, and rejecting a user-added CA is a decision the host app owns through its own
+  `network-security-config`.
+
+If a merchant's own risk assessment requires pinning, they can add it at the app level
+through the standard Android `network-security-config`, pinning UQPAY's **root** CA (not a
+leaf certificate) so that ordinary certificate rotation does not break their app. A merchant
+who does this takes on responsibility for tracking UQPAY's root-CA changes.
+
+If this position changes in a future release, it will be recorded here together with the
+certificates in scope and the rotation process, and the change will be called out in
+`CHANGELOG.md`.
+
 ## Coordinated disclosure
 
 We ask that you give us a reasonable window to ship a fix before publishing details. We

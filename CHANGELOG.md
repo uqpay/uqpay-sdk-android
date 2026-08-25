@@ -119,7 +119,7 @@ credentials.
   returns true, so a renderer killed by memory pressure mid-challenge cannot become a crash
   in the merchant's app; the sheet reports that verification was interrupted and the poller
   settles the payment.
-- **[`docs/testing.md`](docs/testing.md)** — the sandbox testing guide: the 3-D Secure card
+- **`docs/testing.md`** — the sandbox testing guide: the 3-D Secure card
   that works end to end, the two Mastercards that reach `REQUIRES_CUSTOMER_ACTION` and then
   fail at the ACS (`threeDSCompInd=U`) and so look like working 3-DS cards at confirm, the
   Visa `system_error` limitation stated at the top of the page rather than buried in a
@@ -127,13 +127,13 @@ credentials.
   network loss and duplicate submission.
 - **A support channel, and a security disclosure path that names an address.**
   "Getting help" listed exactly what to put in a report and no way to send it. There is now
-  a routing table in [`docs/troubleshooting.md`](docs/troubleshooting.md#getting-help) and a
+  a routing table in `docs/troubleshooting.md` and a
   summary in the README: SDK bugs to GitHub issues, account and payment questions to
   `it@uqpay.com`, and vulnerabilities to GitHub's private reporting or the same address with
   `SECURITY` in the subject — never a public issue. `SECURITY.md` no longer carries a
   pre-push TODO in place of a mailbox, and warns that plain email is unencrypted, so the
   first message should be short and a secure channel arranged before any proof of concept.
-- **[`docs/webhooks.md`](docs/webhooks.md)** — the reconciliation guide the rest of the docs
+- **`docs/webhooks.md`** — the reconciliation guide the rest of the docs
   were assuming: signature verification over the raw body (`x-wk-signature` /
   `x-wk-timestamp`, HMAC-SHA512), retry and dedupe rules, which events decide an order
   (intent events, not attempt events), how `paymentIntentId` / `transactionId` join to

@@ -15,6 +15,11 @@ android {
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()
         consumerProguardFiles("consumer-rules.pro")
+        // Without this AGP falls back to the legacy android.test.InstrumentationTestRunner,
+        // which cannot run AndroidJUnit4 tests: connectedAndroidTest installs the APK and
+        // then hangs with nothing executed. The runner class ships in androidx.test:runner,
+        // pulled in by espresso-core below.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Single source of truth for the version: gradle/libs.versions.toml.
         buildConfigField("String", "UQPAY_SDK_VERSION", "\"${libs.versions.uqpaySdk.get()}\"")
     }
@@ -168,6 +173,10 @@ dependencies {
     testImplementation(libs.androidx.compose.ui.test.junit4)
 
     androidTestImplementation(libs.androidx.test.junit)
+    // ActivityScenario for the device suite. Explicit rather than leaning on ext-junit's
+    // transitive copy, so a version bump there cannot silently change what these compile
+    // against.
+    androidTestImplementation(libs.androidx.test.core.ktx)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

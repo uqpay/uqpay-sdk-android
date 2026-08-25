@@ -16,20 +16,16 @@ Android Payment Gateway SDK for [UQPAY](https://uqpay.com).
 - **Sandbox sheets say so.** A test-mode badge the SDK draws itself and a merchant cannot
   switch off.
 - **Small dependency graph.** No OkHttp, no Retrofit, no Gson, no analytics, no appcompat.
-  The full list is in the [integration guide](docs/integration-guide.md#what-this-sdk-depends-on).
-- **English only for now**, with every string overridable from your own app — see
-  [Localisation](docs/integration-guide.md#localisation).
+  The full dependency list is documented in the integration guide.
+- **English only for now**, with every string overridable from your own app.
 
 ## Modules
 
 - **`uqpay-sdk/`** — the SDK library (published as `com.uqpay.sdk:uqpay-sdk-android`)
 - **`sample-app/`** — reference integration app
-- **`docs/`** — [integration guide](docs/integration-guide.md) ·
-  [API reference](docs/api-reference.md) · [error codes](docs/error-codes.md) ·
-  [testing](docs/testing.md) · [webhooks](docs/webhooks.md) ·
-  [troubleshooting](docs/troubleshooting.md) ·
-  [acceptance criteria](docs/acceptance-criteria.md) ·
-  [release process](docs/release-process.md) · [architecture](docs/architecture.md)
+- Merchant documentation (integration guide, API reference, error codes, testing,
+  webhooks, troubleshooting, architecture) is distributed separately and is not part of
+  this repository.
 
 ## Building
 
@@ -48,13 +44,12 @@ Android Payment Gateway SDK for [UQPAY](https://uqpay.com).
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to raise a change, and
 `CLAUDE.md` (local, not tracked) for project conventions, security rules, and the definition of
-done. Every release must satisfy
-[`docs/acceptance-criteria.md`](docs/acceptance-criteria.md).
+done. Every release must satisfy the project's acceptance criteria.
 
 ## Getting help
 
-- **A bug in this SDK** — open a GitHub issue. What to include:
-  [troubleshooting.md](docs/troubleshooting.md#getting-help).
+- **A bug in this SDK** — open a GitHub issue with the SDK version, device and Android
+  version, and steps to reproduce.
 - **Your UQPAY account, a payment, or credentials** — [it@uqpay.com](mailto:it@uqpay.com).
 - **A security vulnerability** — please do not open a public issue. See
   [`SECURITY.md`](SECURITY.md).

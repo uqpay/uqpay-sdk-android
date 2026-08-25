@@ -21,24 +21,13 @@ local.properties
 secrets.*
 *.secret
 
-# docs/ — the merchant-facing docs (integration guide, API reference, error codes,
-# troubleshooting, etc.) are release deliverables (acceptance-criteria.md §12) and ARE
-# tracked. Only internal working material under docs/ is ignored: research specs, planning
-# and progress notes, audit reports, and the reference-SDK clones.
-#
-# `!docs/` exists because some developer machines ignore `docs/` in ~/.gitignore_global;
-# a repository rule outranks the global one, so the deliverables stay visible everywhere.
-!docs/
-docs/spec/
-docs/reference-sdks/
-docs/**/*-gaps.md
-docs/**/*-audit.md
-docs/**/*PROGRESS*.md
-docs/**/*STATUS*.md
-docs/**/*HANDOFF*.md
-docs/internal/
-docs/plans/
-docs/notes/
+# docs/ is NOT tracked in this repository. Merchant documentation is distributed
+# outside the public repo; internal material (specs, plans, notes, audits, the
+# reference-SDK clones) and release secrets (docs/secrets/ — GPG signing key and
+# passphrase) must never be tracked either. ~/.gitignore_global already ignores
+# docs/; this repeats the rule so it travels with the repo and no `!docs/`
+# override re-exposes any of it.
+docs/
 
 # Agent/assistant instructions — local working material, not repository content.
 # Already covered by ~/.gitignore_global, repeated here so the rule travels with the repo.

@@ -8,10 +8,12 @@ import com.uqpay.sdk.UQPayConfiguration
 import com.uqpay.sdk.auth.UQPayAuthToken
 import com.uqpay.sdk.auth.UQPayTokenProvider
 import com.uqpay.sdk.network.HttpMethod
+import com.uqpay.sdk.network.UQPayLogger
 import com.uqpay.sdk.network.UQPayNetworkClient
 import com.uqpay.sdk.network.UQPayRequest
 import com.uqpay.sdk.network.UQPayResponse
 import com.uqpay.sdk.network.baseUrl
+import com.uqpay.sdk.payment.PaymentMethodType
 import com.uqpay.sdk.payment.PaymentStatus
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -228,6 +230,90 @@ class PaymentSessionTest {
         PaymentSession.release(INTENT_A)
         val c = PaymentSession.obtain(INTENT_A, deps)
         assertSame(a.idempotency, c.idempotency)
+    }
+
+    // ---- The shared token manager -----------------------------------------------------
+    //
+    // UQPAY allows one active access token per merchant: minting a new one invalidates the
+    // previous one. A token manager per session asked the host's provider once per launch,
+    // and two intents alive at once took turns invalidating each other's token — a 401
+    // ping-pong under concurrency. One manager per configuration holds one token.
+
+    @Test
+    fun `every session under one configuration shares one token manager - one fetch for two intents`() = runTest {
+        val deps = deps(ScriptedNetworkClient())
+        val a = PaymentSession.obtain(INTENT_A, deps)
+        a.startIfNeeded()
+        runCurrent()
+        assertEquals("the first read needs a token", 1, tokenFetches)
+
+        val b = PaymentSession.obtain(INTENT_B, deps)
+        b.startIfNeeded()
+        runCurrent()
+        assertEquals("a second intent reuses the token the first one fetched", 1, tokenFetches)
+
+        // A session built after another was released reuses it too.
+        PaymentSession.release(INTENT_A)
+        val c = PaymentSession.obtain(INTENT_A, deps)
+        c.startIfNeeded()
+        runCurrent()
+        assertEquals(1, tokenFetches)
+    }
+
+    @Test
+    fun `re-initialising with a new configuration rebuilds the token manager`() = runTest {
+        val deps = deps(ScriptedNetworkClient())
+        PaymentSession.obtain(INTENT_A, deps).startIfNeeded()
+        runCurrent()
+        assertEquals(1, tokenFetches)
+
+        // A second initialize replaces the configuration; a token minted for the old
+        // provider must never be presented on behalf of the new one.
+        UQPay.initialize(context, configuration())
+        PaymentSession.obtain(INTENT_B, deps).startIfNeeded()
+        runCurrent()
+        assertEquals(2, tokenFetches)
+    }
+
+    // ---- A relaunch with a different presentation --------------------------------------
+
+    /**
+     * A second launch of a running intent re-attaches; its presentation is ignored, because
+     * the engine already chose its screen and the customer may be half-way through it. The
+     * difference is logged so an integrator who meant the second one can see why they got
+     * the first. Documented in `UQPayPaymentLauncher.launch`.
+     */
+    @Test
+    fun `a relaunch with a different presentation keeps the first one and says so at debug`() = runTest {
+        val net = ScriptedNetworkClient()
+        val log = RecordingLogger()
+        val deps = SessionDependencies(
+            networkClient = net,
+            workContext = StandardTestDispatcher(testScheduler),
+            wallClock = { FIXED_NOW },
+            logger = log,
+        )
+        val first = PaymentSession.obtain(INTENT_A, deps)
+        assertEquals(null, first.startedPresentation)
+        assertTrue(first.startIfNeeded(Presentation.CardOnly))
+        runCurrent()
+        val readsAfterFirst = net.gets
+
+        val again = PaymentSession.obtain(INTENT_A, deps)
+        assertSame(first, again)
+        assertFalse(again.startIfNeeded(Presentation.SingleWallet(PaymentMethodType.GRABPAY)))
+        runCurrent()
+
+        assertEquals("no second load", readsAfterFirst, net.gets)
+        assertEquals(0, net.posts.size)
+        assertEquals(Presentation.CardOnly, again.startedPresentation)
+        val selecting = again.state.value as EngineState.SelectingMethod
+        assertEquals("the engine is still on the first launch's screen", Presentation.CardOnly, selecting.presentation)
+        assertEquals(1, log.debug.count { it.contains("first launch's presentation wins") })
+
+        // The same presentation again — a rotation — is the quiet no-op it always was.
+        assertFalse(again.startIfNeeded(Presentation.CardOnly))
+        assertEquals(1, log.debug.count { it.contains("first launch's presentation wins") })
     }
 
     // ---- Hosts: one payment, more than one Activity (audit item 8) ---------------------
@@ -561,6 +647,15 @@ class PaymentSessionTest {
         orphanLifetimeMillis = orphanLifetimeMillis,
         wallClock = { FIXED_NOW },
     )
+
+    private class RecordingLogger : UQPayLogger {
+        val debug = mutableListOf<String>()
+        override fun debug(message: String) {
+            debug += message
+        }
+
+        override fun error(message: String, t: Throwable?) = Unit
+    }
 
     private fun PaymentSession.terminalStatus(): PaymentStatus {
         val s = state.value

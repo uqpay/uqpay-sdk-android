@@ -549,10 +549,21 @@ internal class PaymentViewModel(
      * progress with a way out, and leaving reports `PENDING` — the honest answer while an
      * attempt is outstanding.
      *
+     * ### Card is not a wallet
+     *
+     * `PaymentMethodType.CARD` is refused outright, before the latch and before the saved
+     * state: a wallet confirm whose type is "card" is a body the gateway has no reading of,
+     * and claiming the latch under `intent|card` would leave a later, correct launch finding
+     * a wallet attempt "in flight" that never existed. `UQPayPaymentActivity` refuses a
+     * `SingleWallet(CARD)` launch before a session exists, so this is a backstop for a screen
+     * that reaches here some other way; it sends nothing and leaves the engine choosing a
+     * method, where a back-press is an honest `CANCELLED`.
+     *
      * @return the engine's acceptance, or null when no confirm was sent because one had
-     *   already been made for this intent and wallet.
+     *   already been made for this intent and wallet — or because [method] is not a wallet.
      */
     private fun confirmWallet(method: PaymentMethodType): ConfirmAcceptance? {
+        if (method == PaymentMethodType.CARD) return null
         savedState[KEY_WALLET_METHOD] = method.raw
         return when (val claim = walletLatch.claim(paymentIntentId, method.raw)) {
             WalletConfirmClaim.Granted ->

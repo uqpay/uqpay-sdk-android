@@ -12,6 +12,8 @@ import com.uqpay.sdk.engine.EngineState
 import com.uqpay.sdk.engine.PaymentSession
 import com.uqpay.sdk.engine.Presentation
 import com.uqpay.sdk.engine.SessionDependencies
+import com.uqpay.sdk.engine.WalletConfirmClaim
+import com.uqpay.sdk.engine.WalletConfirmLatch
 import com.uqpay.sdk.network.HttpMethod
 import com.uqpay.sdk.network.UQPayNetworkClient
 import com.uqpay.sdk.network.UQPayRequest
@@ -349,6 +351,27 @@ class PaymentViewModelTest {
         h.recreateViewModel()
         runCurrent()
         assertEquals(1, h.net.posts.size)
+    }
+
+    /**
+     * The backstop behind `UQPayPaymentActivity`'s refusal of `SingleWallet(CARD)`: a screen
+     * that reaches the auto-confirm with card as the "wallet" sends nothing, claims nothing
+     * in the latch, and records no wallet in its saved state. Back is then an honest
+     * `CANCELLED` — nothing was ever sent.
+     */
+    @Test
+    fun `single-wallet naming card sends no confirm and leaves the latch untouched`() = runTest {
+        val h = harness(presentation = Presentation.SingleWallet(PaymentMethodType.CARD))
+        runCurrent()
+
+        assertEquals("no wallet confirm typed 'card' may leave the device", 0, h.net.posts.size)
+        assertFalse(h.session.engine.isConfirmInFlight)
+        assertEquals(null, h.savedState.get<String>(PaymentViewModel.KEY_WALLET_METHOD))
+        assertTrue(h.vm.uiState.value !is PaymentUiState.Confirming)
+        // The latch was never claimed under intent|card: a fresh claim is still granted.
+        assertEquals(WalletConfirmClaim.Granted, WalletConfirmLatch().claim(INTENT, PaymentMethodType.CARD.raw))
+        assertEquals(BackDecision.CANCELLED, h.vm.onBackRequested())
+        assertEquals(PaymentStatus.CANCELLED, h.session.terminal().status)
     }
 
     // ---- load failure ------------------------------------------------------------------

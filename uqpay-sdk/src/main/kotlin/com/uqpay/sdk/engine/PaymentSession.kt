@@ -2,6 +2,7 @@ package com.uqpay.sdk.engine
 
 import androidx.annotation.VisibleForTesting
 import com.uqpay.sdk.UQPay
+import com.uqpay.sdk.UQPayConfiguration
 import com.uqpay.sdk.error.ErrorCopy
 import com.uqpay.sdk.network.DefaultUQPayNetworkClient
 import com.uqpay.sdk.network.ErrorMapper
@@ -109,6 +110,13 @@ internal class SessionDependencies(
  * So there is exactly one, built lazily in the companion the first time any session needs it
  * and shared by every session in the process.
  *
+ * ### One `TokenManager` per configuration
+ *
+ * For the same reason at the other end of the graph: UQPAY allows one active access token
+ * per merchant, so every session under a configuration shares one manager and one token
+ * rather than each minting its own and invalidating the others'. See
+ * [sharedTokenManagerLocked].
+ *
  * ### The composition root
  *
  * [obtain] is the first place the SDK is wired end to end: configuration → token manager →
@@ -137,6 +145,10 @@ internal class PaymentSession private constructor(
 ) {
 
     private val started = AtomicBoolean(false)
+
+    /** The presentation [startIfNeeded] loaded with; null until it has. See [startIfNeeded]. */
+    @Volatile
+    private var startedWith: Presentation? = null
 
     /**
      * How many Activities are currently hosting this payment. See [attachHost].
@@ -168,6 +180,11 @@ internal class PaymentSession private constructor(
     val hasStarted: Boolean
         get() = started.get()
 
+    /** The presentation this session was started with, or null before [startIfNeeded]. Tests. */
+    @get:VisibleForTesting
+    val startedPresentation: Presentation?
+        get() = startedWith
+
     /**
      * Whether this session's scope is still alive. `false` once [release] has cancelled it —
      * immediately, or at the end of an orphan's bounded lifetime. Diagnostics and tests.
@@ -184,10 +201,33 @@ internal class PaymentSession private constructor(
      * engine's own single-use guard so the session can answer [hasStarted] and so a second
      * call is a documented no-op instead of a logged programming error.
      *
+     * ### The first launch's presentation wins
+     *
+     * A second launch of the *same* intent while it is still running — a double-tap, or a
+     * merchant relaunching a sheet the customer left open — re-attaches to this session, and
+     * this call is the no-op described above. Its [presentation] is therefore **ignored**:
+     * the engine already chose its screen when it loaded, and the customer may be half-way
+     * through it. Rebuilding the engine to honour the new presentation would be the
+     * rotation disaster by another name (a second load, a second Pay button, a second
+     * confirm), and swapping the screen under a customer typing a card number is not better.
+     * The difference is logged at debug so an integrator who meant the second one can see
+     * why they got the first; the launch parcel's `billingDetails` and
+     * `allowedPaymentMethods` are read by the new Activity regardless.
+     *
      * @return `true` if this call started the load, `false` if it had already been started.
      */
     fun startIfNeeded(presentation: Presentation = Presentation.MethodList): Boolean {
-        if (!started.compareAndSet(false, true)) return false
+        if (!started.compareAndSet(false, true)) {
+            val first = startedWith
+            if (first != null && first != presentation) {
+                logger.debug(
+                    "Ignoring presentation $presentation for a payment already running as $first; " +
+                        "the first launch's presentation wins",
+                )
+            }
+            return false
+        }
+        startedWith = presentation
         engine.load(presentation)
         return true
     }
@@ -327,6 +367,12 @@ internal class PaymentSession private constructor(
         /** The one registry per process. See the class KDoc. */
         private var sharedIdempotency: ConfirmIdempotency? = null
 
+        /** The one token manager per configuration. See [sharedTokenManagerLocked]. */
+        private var sharedTokenManager: TokenManager? = null
+
+        /** The configuration [sharedTokenManager] was built for, compared by identity. */
+        private var sharedTokenManagerFor: UQPayConfiguration? = null
+
         /**
          * The session for [paymentIntentId]: the running one if it exists, else a new one.
          *
@@ -408,6 +454,8 @@ internal class PaymentSession private constructor(
                 orphans.clear()
                 idempotency = sharedIdempotency
                 sharedIdempotency = null
+                sharedTokenManager = null
+                sharedTokenManagerFor = null
             }
             toCancel.forEach { it.scope.cancel(CancellationException("clearAllForTest")) }
             idempotency?.clearAllForTest()
@@ -435,7 +483,7 @@ internal class PaymentSession private constructor(
             // Transport and authentication.
             val networkClient = deps.networkClient
                 ?: DefaultUQPayNetworkClient(logger = logger, workContext = deps.workContext)
-            val tokenManager = TokenManager(configuration.tokenProvider, deps.workContext)
+            val tokenManager = sharedTokenManagerLocked(configuration, deps.workContext)
             val apiClient = UQPayApiClient(configuration, networkClient, tokenManager, logger)
             val errorMapper = ErrorMapper(configuration.environment, ErrorCopy.from(appContext))
 
@@ -468,6 +516,40 @@ internal class PaymentSession private constructor(
                 logger = logger,
             )
             return PaymentSession(paymentIntentId, engine, scope, deps.orphanLifetimeMillis, logger, idempotency)
+        }
+
+        /**
+         * The one [TokenManager] for [configuration], built on first use. Called under [lock].
+         *
+         * ### Why not one per session
+         *
+         * UQPAY permits **one active access token per merchant**: minting a new one
+         * invalidates the previous one. A manager per session meant every launch asked the
+         * merchant's `fetchToken()` for a token of its own, and two intents alive at once —
+         * the customer's second order while the first sheet reconciles, or split-screen —
+         * held two managers that took turns invalidating each other's token. Each `401`
+         * then forced the other side to mint again: a ping-pong that ends in an
+         * authentication failure for a payment that had every right to succeed. One manager
+         * per configuration makes the SDK hold **one** token, refresh it behind **one**
+         * mutex, and ask the host for a new one only when that one is about to expire.
+         *
+         * Keyed by the configuration **instance** rather than by the process: a second
+         * [UQPay.initialize] replaces the configuration, and a token minted for the old
+         * provider must not be presented on behalf of the new one. The `workContext` is the
+         * first builder's, which in production is always [Dispatchers.IO]; a test that needs
+         * its own dispatcher clears the shared state first, as every session test does.
+         */
+        private fun sharedTokenManagerLocked(
+            configuration: UQPayConfiguration,
+            workContext: CoroutineContext,
+        ): TokenManager {
+            sharedTokenManager
+                ?.takeIf { sharedTokenManagerFor === configuration }
+                ?.let { return it }
+            return TokenManager(configuration.tokenProvider, workContext).also {
+                sharedTokenManager = it
+                sharedTokenManagerFor = configuration
+            }
         }
 
         /**

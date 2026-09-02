@@ -92,7 +92,10 @@ public class PaymentSessionParams @JvmOverloads constructor(
         /**
          * Skip the list and open one wallet's QR flow directly.
          *
-         * @property method the wallet to present. Must be offered by the intent.
+         * @property method the wallet to present. Must be offered by the intent, and must be
+         *   a wallet: `SingleWallet(PaymentMethodType.CARD)` ends the payment immediately with
+         *   `FAILED` / `INVALID_PAYMENT_METHOD` before any network call — use [CardOnly] for
+         *   card.
          */
         public class SingleWallet(public val method: PaymentMethodType) : Presentation() {
             override fun equals(other: Any?): Boolean =

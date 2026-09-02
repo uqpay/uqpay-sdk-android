@@ -63,8 +63,13 @@ object DemoMerchantBackend : UQPayTokenProvider {
     private const val READ_TIMEOUT_MILLIS = 30_000
 
     /**
-     * Where the customer comes back to after a wallet or bank app. Must match the scheme
-     * the app declares; see `AndroidManifest.xml`.
+     * The intent's `return_url`: the URL the issuer's 3-D Secure page navigates to when its
+     * part is over. The SDK treats reaching it as the *end of the browser step* — a signal
+     * to re-read the intent, never an outcome — and consumes the navigation inside its own
+     * WebView. It is never opened as a deep link into this app, so nothing is declared for
+     * this scheme in `AndroidManifest.xml` and nothing needs to be. A custom scheme like
+     * this one is the recommended shape: an `https` URL would be a page the SDK may have to
+     * render inside the sheet when the issuer POSTs to it.
      */
     private const val RETURN_URL = "uqpaysample://payment"
 

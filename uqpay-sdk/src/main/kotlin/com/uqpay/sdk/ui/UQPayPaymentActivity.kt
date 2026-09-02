@@ -152,6 +152,23 @@ internal class UQPayPaymentActivity : ComponentActivity() {
             return
         }
 
+        // `SingleWallet(CARD)` is a type error the compiler cannot catch: `SingleWallet` takes
+        // any `PaymentMethodType`, and card is one. Left alone it reaches the ViewModel's
+        // auto-confirm, which sends a *wallet* confirm whose type is "card" — a body the
+        // gateway has no reading of — and claims the wallet latch for this intent under
+        // "card", so a later, correct launch finds the wallet already "in flight". Refused
+        // here, before a session exists, with the fix named for the developer.
+        if (params.presentation.isSingleWalletCard()) {
+            finishWith(
+                failure(
+                    UQPayErrorCode.INVALID_PAYMENT_METHOD,
+                    "PaymentSessionParams.presentation is SingleWallet(CARD), but card is not " +
+                        "a wallet. Use Presentation.CardOnly for card.",
+                ),
+            )
+            return
+        }
+
         // A presentation that names a method the allow-list excludes contradicts itself.
         // Caught here, before a session exists and before a single byte goes to the gateway:
         // the alternative is opening the card form for a payment the merchant's own rules
@@ -424,6 +441,14 @@ internal class UQPayPaymentActivity : ComponentActivity() {
         val colors = if (dark) appearance.darkColors else appearance.lightColors
         window.setBackgroundDrawable(ColorDrawable(colors.background))
     }
+
+    /**
+     * True for `SingleWallet(CARD)`: a wallet presentation naming the one method that is not
+     * a wallet. See the refusal in [onCreate]; `PaymentViewModel.confirmWallet` holds the
+     * same rule as a backstop.
+     */
+    private fun PaymentSessionParams.Presentation.isSingleWalletCard(): Boolean =
+        this is PaymentSessionParams.Presentation.SingleWallet && method == PaymentMethodType.CARD
 
     /** The public presentation → the engine's. One place, so the two cannot drift. */
     private fun PaymentSessionParams.Presentation.toEngine(): Presentation = when (this) {

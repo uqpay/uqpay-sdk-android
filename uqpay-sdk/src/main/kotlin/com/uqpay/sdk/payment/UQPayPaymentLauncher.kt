@@ -13,8 +13,10 @@ public interface UQPayPaymentLauncher {
     /**
      * Launches the payment flow for an intent created by the merchant backend.
      *
-     * Safe to call more than once over the life of the host Activity — each call starts
-     * a fresh payment. A double-tap cannot **charge** twice: two launches of one intent
+     * Safe to call more than once over the life of the host Activity. A call for a **new**
+     * intent starts a fresh payment; a call for an intent that is **already running** joins
+     * that payment rather than starting another — see below for what that means for the
+     * second call's parameters. A double-tap cannot **charge** twice: two launches of one intent
      * share a single engine, confirm and idempotency key, so the SDK guards the submission
      * rather than relying on the merchant disabling a button. It is still two launches, and
      * therefore two callbacks — see below.
@@ -25,6 +27,15 @@ public interface UQPayPaymentLauncher {
      * outcome. Launching the *same* intent twice is not a second payment — both sheets share
      * one engine, one confirm and one idempotency key — but it is two launches, so the
      * callback is invoked once for each.
+     *
+     * **The first launch's presentation wins.** A second launch of an intent that is still
+     * running keeps the screen the first one opened with: its
+     * [PaymentSessionParams.presentation] is ignored, because the customer may be half-way
+     * through that screen and swapping it — or rebuilding the payment to honour the new one —
+     * is how a payment gets a second Pay button. The SDK logs the difference at debug when
+     * `loggingEnabled` is set. The second call's [PaymentSessionParams.billingDetails] and
+     * [PaymentSessionParams.allowedPaymentMethods] are read by the second sheet as normal.
+     * To present the same intent differently, wait for the first launch's callback.
      *
      * If the host is in a state where the flow cannot start, the failure is delivered
      * through the [PaymentCallback] rather than thrown.

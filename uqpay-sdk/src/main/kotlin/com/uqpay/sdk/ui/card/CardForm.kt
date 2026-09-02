@@ -54,10 +54,15 @@ import com.uqpay.sdk.ui.CountryCodes
  * (AC §4.3), and the reason `CardFormTest` scans the saved state for card digits rather
  * than trusting a code review to keep noticing.
  *
- * The cost is honest and small: a rotation empties the card fields and the customer types
- * them again. Losing thirty seconds of typing is not comparable to leaving a card number in
- * the merchant's app data directory. The payment itself is untouched either way — it lives
- * in the engine's session, which does survive rotation.
+ * The cost is honest and small. A rotation does **not** empty the fields: the manifest
+ * handles `orientation|screenSize|screenLayout|keyboardHidden` itself, so the Activity — and
+ * this state with it — stays alive through a turn of the phone. What does empty them is any
+ * configuration change the manifest leaves to the system (a dark-mode switch, a font-scale
+ * change, a locale change) and process death, all of which recreate the Activity and the
+ * customer types the card again. Losing thirty seconds of typing is not comparable to
+ * leaving a card number in the merchant's app data directory. The payment itself is
+ * untouched either way — it lives in the engine's session, which survives every one of
+ * those but process death.
  *
  * Values are read from here on **every** send, never copied into an attempt, a log line, or
  * an exception. See `ConfirmPayload.Card`, which overrides `toString` for the same reason.

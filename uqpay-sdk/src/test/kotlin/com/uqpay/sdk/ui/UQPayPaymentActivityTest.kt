@@ -857,6 +857,47 @@ class UQPayPaymentActivityTest {
     }
 
     /**
+     * `SingleWallet(CARD)` type-checks — `SingleWallet` takes any `PaymentMethodType` — and
+     * used to reach the ViewModel's auto-confirm, which sent a wallet confirm typed "card"
+     * and latched the wallet registry under `intent|card`. Refused before a session is
+     * started, with `CardOnly` named as the fix.
+     */
+    @Test
+    fun `a single-wallet presentation naming card is refused before any network call`() {
+        val (net, session) = attach(INTENT)
+        val scenario = launch(INTENT, PaymentSessionParams.Presentation.SingleWallet(PaymentMethodType.CARD))
+        pump()
+
+        val result = deliveredResult(scenario)
+        assertEquals(PaymentStatus.FAILED, result.status)
+        assertEquals(UQPayErrorCode.INVALID_PAYMENT_METHOD, result.error?.code)
+        assertEquals(INTENT, result.paymentIntentId)
+        assertEquals("nothing may be sent for a launch that is not a wallet launch", 0, net.requests.size)
+        assertFalse("the session is never started", session.hasStarted)
+        assertEquals(0, net.posts.size)
+        assertTrue(result.error!!.developerMessage.orEmpty().contains("CardOnly"))
+        assertFalse(result.error!!.message.contains("CardOnly"))
+    }
+
+    /** The same refusal wins over the allow-list one: the presentation is wrong before it contradicts anything. */
+    @Test
+    fun `a single-wallet presentation naming card is refused even when the allow-list would permit card`() {
+        val (net, _) = attach(INTENT)
+        val scenario = launchWithAllowList(
+            INTENT,
+            PaymentSessionParams.Presentation.SingleWallet(PaymentMethodType.CARD),
+            setOf(PaymentMethodType.CARD),
+        )
+        pump()
+
+        val result = deliveredResult(scenario)
+        assertEquals(PaymentStatus.FAILED, result.status)
+        assertEquals(UQPayErrorCode.INVALID_PAYMENT_METHOD, result.error?.code)
+        assertEquals(0, net.requests.size)
+        assertTrue(result.error!!.developerMessage.orEmpty().contains("CardOnly"))
+    }
+
+    /**
      * `MethodList` names no method, so it can never contradict the allow-list — not even an
      * empty one, which simply produces an empty list on screen. A launch that started reading
      * the intent is a launch that was not refused.

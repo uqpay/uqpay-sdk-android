@@ -4,6 +4,42 @@ All notable changes to the UQPAY SDK for Android are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **`SingleWallet(PaymentMethodType.CARD)` is refused before any network call.** It
+  type-checks — `SingleWallet` takes any `PaymentMethodType` — and used to reach the sheet's
+  auto-confirm, which sent a *wallet* confirm typed `card` (a body the gateway has no reading
+  of) and latched the wallet registry for that intent under `card`, so a later, correct launch
+  found a wallet attempt "in flight" that never existed. The payment now ends with `FAILED` /
+  `INVALID_PAYMENT_METHOD` and a `developerMessage` naming `CardOnly` as the fix, exactly like
+  a presentation that contradicts `allowedPaymentMethods`; the ViewModel holds the same rule
+  as a backstop.
+- **One access-token manager per configuration, not per payment.** UQPAY allows one active
+  token per merchant, so a manager per session — every launch calling your `fetchToken()`,
+  and two intents alive at once taking turns invalidating each other's token on every `401` —
+  could fail a payment that had every right to succeed. Every session under a configuration
+  now shares one manager, one token and one refresh mutex; `fetchToken()` is called when the
+  held token nears expiry, and after a `401`. A second `UQPay.initialize` rebuilds it.
+
+### Changed
+- **A relaunch of a running intent keeps the first launch's `presentation`.** This was
+  already the behaviour — the second launch re-attaches to the running payment — but it was
+  undocumented and silent. It is now stated in `UQPayPaymentLauncher.launch` and the
+  integration guide, and the SDK logs the ignored presentation at debug under
+  `loggingEnabled`. `billingDetails` and `allowedPaymentMethods` from the second call are
+  honoured, as before.
+- **Docs and comments corrected, no behaviour change.** The card form's KDoc claimed rotation
+  empties the fields; the manifest handles rotation, so they survive it and are lost only to
+  configuration changes the system performs (dark mode, font scale, locale) and process
+  death. The sample app's `RETURN_URL` comment claimed the scheme must be declared in the
+  manifest; the SDK consumes the return URL inside its own WebView and nothing is declared or
+  needed. The integration guide now states what `return_url` does on Android (a 3-D Secure
+  end-of-step signal, never an outcome; an `https` one may render inside the sheet on a
+  POST), that app-to-app 3-D Secure links are consumed rather than launched and run out to
+  `PENDING`, every path that delivers `PENDING`, and that `completedAtEpochMillis` is device
+  observation time and `traceId` is always `null` today.
+
 ## [0.1.0] — 2026-09-02
 
 **The first release.** Everything below is new to merchants: there is no earlier version to

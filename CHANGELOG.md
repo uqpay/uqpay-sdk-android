@@ -13,9 +13,9 @@ published.
 
 The payment flow is implemented end to end — card with 3-D Secure, wallet QR, bank-transfer
 instructions, persisted idempotency, rotation and process-death recovery — and is covered by
-877 unit tests. What remains before 0.1.0 ships is human-gated: a manual pass on physical
-devices, a LeakCanary run on the sample app, CI actually executing, and Maven publishing
-credentials.
+879 unit tests and 8 instrumented tests, all green in CI. What remains before 0.1.0 ships
+is human-gated: a manual pass on physical devices, a LeakCanary run on the sample app, and
+Maven publishing credentials.
 
 ### Added
 - **Maven Central publishing.** The SDK publishes as `com.uqpay.sdk:uqpay-sdk-android`
@@ -378,5 +378,5 @@ regression for a merchant — but each was reachable in the code as it stood.
   the moment between `launch` returning and the Activity creating the session there is nothing
   to cancel, and the call is a no-op. Re-issue it if the condition still holds.
 - Not yet verified by a human: physical-device matrix (AC §5.1/§5.2), LeakCanary
-  (§10.2), a manual release-candidate pass (§9.3), Maven publishing (§11.3/§11.4), and
-  CI having actually run (§9.1).
+  (§10.2), a manual release-candidate pass (§9.3), and the Maven Central publish itself
+  (§11.3 — the artifact, its POM and jars are verified locally via `publishToMavenLocal`).

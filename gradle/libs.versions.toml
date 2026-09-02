@@ -1,6 +1,6 @@
 [versions]
 # SDK artifact version — single source of truth (see docs/release-process.md)
-uqpaySdk = "0.1.0-SNAPSHOT"
+uqpaySdk = "0.1.0"
 # Maven coordinates. The group is the namespace UQPAY owns on Maven Central (verified under
 # the company Central Portal account) — the same one the Java server SDK publishes under.
 uqpaySdkGroup = "com.uqpay.sdk"

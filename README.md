@@ -2,10 +2,16 @@
 
 Android Payment Gateway SDK for [UQPAY](https://uqpay.com).
 
-> **Status: pre-release.** The payment flow is implemented end to end — card with 3-D
-> Secure, wallet QR, bank-transfer instructions, persisted idempotency, rotation and
-> process-death recovery. What remains before 0.1.0 is human-gated; see
-> [`CHANGELOG.md`](CHANGELOG.md).
+> **Status: 0.1.0 on Maven Central** (published 2026-09-02).
+>
+> ```kotlin
+> implementation("com.uqpay.sdk:uqpay-sdk-android:0.1.0")
+> ```
+>
+> The payment flow is implemented end to end — card with 3-D Secure, wallet QR,
+> bank-transfer instructions, persisted idempotency, rotation and process-death recovery —
+> and verified by the unit and emulator suites in CI. Physical-device verification is still
+> in progress; see the known limitations in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## At a glance
 

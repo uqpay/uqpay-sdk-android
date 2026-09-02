@@ -1,5 +1,11 @@
 # UQPAY SDK for Android
 
+[![CI](https://github.com/uqpay/uqpay-sdk-android/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/uqpay/uqpay-sdk-android/actions/workflows/ci.yml)
+[![Maven Central](https://img.shields.io/maven-central/v/com.uqpay.sdk/uqpay-sdk-android)](https://central.sonatype.com/artifact/com.uqpay.sdk/uqpay-sdk-android)
+![minSdk](https://img.shields.io/badge/minSdk-24-brightgreen)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.1.0-7F52FF)
+![License](https://img.shields.io/badge/license-MIT-blue)
+
 Android Payment Gateway SDK for [UQPAY](https://uqpay.com).
 
 > **Status: 0.1.0 on Maven Central** (published 2026-09-02).

@@ -127,6 +127,23 @@ class UQPayApiClientTest {
         }
 
     @Test
+    fun `a poll read is marked single-attempt all the way to the transport, and an ordinary read is not`() =
+        runTest {
+            val network = RecordingNetworkClient(response(200, intentJson), response(200, intentJson))
+            val apiClient = client(network)
+
+            apiClient.retrieveIntent("PI_1", singleAttempt = true)
+            apiClient.retrieveIntent("PI_1")
+
+            assertTrue(
+                "the flag must survive the copy that adds the auth headers, or the poller's " +
+                    "reads silently get the retry ladder back",
+                network.requests[0].singleAttempt,
+            )
+            assertFalse(network.requests[1].singleAttempt)
+        }
+
+    @Test
     fun `confirm targets the confirm endpoint with a POST and the idempotency key`() = runTest {
         val network = RecordingNetworkClient(response(200, intentJson))
 

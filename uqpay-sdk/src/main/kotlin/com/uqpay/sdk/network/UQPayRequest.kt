@@ -19,6 +19,12 @@ internal enum class HttpMethod { GET, POST }
  * @property body pre-encoded JSON. Encoding happens at the call site so a replay can
  *   resend **byte-identical** content: the gateway rejects a reused key whose payload
  *   changed, and re-encoding a model is not guaranteed to produce identical bytes.
+ * @property singleAttempt send once and report what happened, even though the request is
+ *   retry-safe. For a caller that is **already a retry loop** — the intent poller. Nesting
+ *   the transport's 2s/4s/8s ladder inside each poll attempt multiplies the two: offline,
+ *   every read takes ~14s to fail instead of failing at once, and a 150-attempt 3-D Secure
+ *   poll sized for five minutes runs for the better part of an hour (seen on the 2026-09-29
+ *   device pass). The poller's own next attempt is the retry.
  */
 internal class UQPayRequest(
     val method: HttpMethod,
@@ -26,6 +32,7 @@ internal class UQPayRequest(
     val headers: Map<String, String> = emptyMap(),
     val idempotencyKey: String? = null,
     val body: String? = null,
+    val singleAttempt: Boolean = false,
 ) {
     /**
      * Whether this request may be resent after an ambiguous failure.

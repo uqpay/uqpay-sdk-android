@@ -27,6 +27,16 @@ internal fun interface IntentSource {
         /** The production source: one GET of one intent, per attempt. */
         fun forIntent(client: UQPayApiClient, paymentIntentId: String): IntentSource =
             IntentSource { client.retrieveIntent(paymentIntentId) }
+
+        /**
+         * The source for [IntentPoller]: the same GET, sent **once** per attempt with no
+         * transport retries underneath. The poller is the retry loop — a failed read is
+         * held and the intent is re-read one interval later — so a ladder inside each
+         * attempt only stretches the poll: offline it turned the five-minute 3-D Secure
+         * budget into roughly forty.
+         */
+        fun forPolling(client: UQPayApiClient, paymentIntentId: String): IntentSource =
+            IntentSource { client.retrieveIntent(paymentIntentId, singleAttempt = true) }
     }
 }
 
@@ -88,13 +98,13 @@ internal fun interface EarlyReturnCheck {
  * held as a failed read. Nothing about it can end a poll early — the attempt is spent either
  * way and the loop continues — so the suspended-time property above is untouched.
  *
- * It exists because a read is not one request. Underneath it, `DefaultUQPayNetworkClient`
- * retries a safe GET three times with 2s/4s/8s backoff, each retry carrying its own 30s
- * connect and read timeouts, and each able to honour a `Retry-After`. One flaky read can
- * therefore occupy a minute or more while spending a single attempt, and a `WalletQr` budget
- * of 300 such attempts spans hours rather than the ten minutes it is sized for. The customer
- * meanwhile sees a QR nobody appears to be watching. Bounding the read puts the poll's real
- * duration back within sight of `maxAttempts × intervalMillis`.
+ * It exists because a read can be slow without failing. The production source
+ * ([IntentSource.forPolling]) sends each read once, with no transport retries underneath, but
+ * that one request still carries a 30s connect and a 30s read timeout, and a source that does
+ * retry (2s/4s/8s backoff, `Retry-After`) can occupy a minute or more while spending a single
+ * attempt — at which point a `WalletQr` budget of 300 attempts spans hours rather than the ten
+ * minutes it is sized for, and the customer sees a QR nobody appears to be watching. Bounding
+ * the read keeps the poll's real duration within sight of `maxAttempts × intervalMillis`.
  *
  * @property maxAttempts reads inside the loop. Values below 1 are treated as 1: a
  *   pathological budget must still take one look at the payment rather than report an

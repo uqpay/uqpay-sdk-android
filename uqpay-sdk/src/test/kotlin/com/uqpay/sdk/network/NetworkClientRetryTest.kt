@@ -60,6 +60,33 @@ class NetworkClientRetryTest {
         }
     }
 
+    /**
+     * The intent poller's reads. The poller is already a retry loop, so a ladder underneath
+     * each of its attempts only multiplies the two: offline, a 150-attempt 3-D Secure poll
+     * sized for five minutes ran for roughly forty (2026-09-29 device pass).
+     */
+    @Test
+    fun `a single-attempt GET is sent once, whether it fails in transport or with a 5xx`() = runTest {
+        val singleGet = UQPayRequest(
+            method = HttpMethod.GET,
+            url = "https://api-sandbox.uqpaytech.com/api/v2/payment_intents/PI_1",
+            singleAttempt = true,
+        )
+
+        val offline = FakeConnectionFactory(FakeReply.failing(IOException("unreachable")), FakeReply(status = 200))
+        val started = testScheduler.currentTime
+        val thrown = runCatching { client(offline).execute(singleGet) }.exceptionOrNull()
+        assertTrue("got $thrown", thrown is UQPayApiException.TransportFailure)
+        assertEquals(1, offline.callCount)
+        assertEquals("no backoff may be spent on a read the poller will repeat anyway", 0L, testScheduler.currentTime - started)
+
+        listOf(429, 503).forEach { status ->
+            val degraded = FakeConnectionFactory(FakeReply(status = status), FakeReply(status = 200))
+            assertEquals(status, client(degraded).execute(singleGet).statusCode)
+            assertEquals("HTTP $status", 1, degraded.callCount)
+        }
+    }
+
     @Test
     fun `a 4xx is never retried`() = runTest {
         listOf(400, 401, 402, 403, 404, 409, 422).forEach { status ->

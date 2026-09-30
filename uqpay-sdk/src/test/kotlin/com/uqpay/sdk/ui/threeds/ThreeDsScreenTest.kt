@@ -5,6 +5,7 @@ import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -485,6 +486,96 @@ class ThreeDsScreenTest {
         assertEquals(ThreeDsBrowsingState.MAX_URLS_PER_SESSION, ThreeDsBrowsingState.visitedUrls(INTENT).size)
     }
 
+    // ---- a page that fails to load must not strand the customer -----------------------------------
+    //
+    // Found on the 2026-09-29 device pass: cut the network as the issuer's page is loading and
+    // the WebView shows its own "Webpage not available" page, ACS address and all (a blank
+    // white page on API 24), never reloads it, and leaves Cancel as the only control.
+
+    private class LoadEvents {
+        var failed = 0
+        var subFrameFailed = 0
+        var reachedReturnUrl = 0
+    }
+
+    private fun clientRecording(events: LoadEvents, prefixes: List<String> = emptyList()) = ThreeDsWebViewClient(
+        returnUrlPrefixes = prefixes,
+        onStarted = {},
+        onFinished = {},
+        onVisited = {},
+        onReachedReturnUrl = { events.reachedReturnUrl++ },
+        onMainFrameLoadFailed = { events.failed++ },
+        onSubFrameLoadFailed = { events.subFrameFailed++ },
+        onRendererGone = {},
+    )
+
+    @Test
+    fun `a main-frame load error is reported so the screen can replace the WebView's error page`() {
+        val events = LoadEvents()
+        clientRecording(events).onReceivedError(null, request(acsUrl), null)
+        assertEquals(1, events.failed)
+        assertEquals("a failed load is not the end of the browser step", 0, events.reachedReturnUrl)
+    }
+
+    /**
+     * What API 24 actually does when the network drops: the ACS page has loaded, its hidden
+     * 3DS-method iframe times out, and the step stalls on a blank page. Not a reason to
+     * replace the page — the same callback fires for a beacon — but a reason to offer Reload.
+     */
+    @Test
+    fun `a sub-frame connectivity error never replaces the page, it only offers a reload`() {
+        val events = LoadEvents()
+        val client = clientRecording(events)
+        listOf(
+            WebViewClient.ERROR_TIMEOUT,
+            WebViewClient.ERROR_HOST_LOOKUP,
+            WebViewClient.ERROR_CONNECT,
+            WebViewClient.ERROR_IO,
+        ).forEach { code ->
+            client.onLoadError("https://acs.example.invalid/3dsmethod/collect", mainFrame = false, errorCode = code)
+        }
+        assertEquals(4, events.subFrameFailed)
+        assertEquals("a beacon timing out must not replace a working challenge", 0, events.failed)
+    }
+
+    @Test
+    fun `a sub-frame error that is not about the network says nothing at all`() {
+        val events = LoadEvents()
+        val client = clientRecording(events)
+        listOf(
+            WebViewClient.ERROR_UNKNOWN,
+            WebViewClient.ERROR_UNSUPPORTED_SCHEME,
+            WebViewClient.ERROR_FAILED_SSL_HANDSHAKE,
+            WebViewClient.ERROR_BAD_URL,
+        ).forEach { code ->
+            client.onLoadError("https://beacon.example.invalid/pixel", mainFrame = false, errorCode = code)
+        }
+        // …and the framework entry point, with no error object to read a code from.
+        client.onReceivedError(null, request("https://beacon.example.invalid/pixel", mainFrame = false), null)
+        assertEquals(0, events.subFrameFailed)
+        assertEquals(0, events.failed)
+    }
+
+    @Test
+    fun `a return URL that surfaces as a load error is still the end of the step, not a failure`() {
+        // A server redirect to the merchant's scheme that the WebView followed without asking
+        // shouldOverrideUrlLoading arrives here as ERR_UNKNOWN_URL_SCHEME.
+        val events = LoadEvents()
+        val client = clientRecording(events, prefixes = listOf("https://merchant.example.invalid/return"))
+        client.onReceivedError(null, request("uqpaysample://payment?p=succeeded"), null)
+        client.onReceivedError(null, request("https://merchant.example.invalid/return?p=failed"), null)
+        assertEquals(2, events.reachedReturnUrl)
+        assertEquals(0, events.failed)
+    }
+
+    @Test
+    fun `a device-handler URL that fails to load is dropped, leaving the challenge where it was`() {
+        val events = LoadEvents()
+        clientRecording(events).onReceivedError(null, request("intent://pay#Intent;scheme=bankapp;end"), null)
+        assertEquals(0, events.failed)
+        assertEquals(0, events.reachedReturnUrl)
+    }
+
     // ---- M-render: a renderer crash must not take the merchant's app with it ----------------------
 
     @Test
@@ -497,6 +588,8 @@ class ThreeDsScreenTest {
             onFinished = {},
             onVisited = {},
             onReachedReturnUrl = {},
+            onMainFrameLoadFailed = {},
+            onSubFrameLoadFailed = {},
             onRendererGone = { rendererGone++; returned++ },
         )
 
@@ -531,12 +624,14 @@ class ThreeDsScreenTest {
         onFinished = {},
         onVisited = { url -> ThreeDsBrowsingState.record(INTENT, url) },
         onReachedReturnUrl = {},
+        onMainFrameLoadFailed = {},
+        onSubFrameLoadFailed = {},
         onRendererGone = {},
     )
 
-    private fun request(url: String): WebResourceRequest = object : WebResourceRequest {
+    private fun request(url: String, mainFrame: Boolean = true): WebResourceRequest = object : WebResourceRequest {
         override fun getUrl(): Uri = Uri.parse(url)
-        override fun isForMainFrame(): Boolean = true
+        override fun isForMainFrame(): Boolean = mainFrame
         override fun isRedirect(): Boolean = false
         override fun hasGesture(): Boolean = false
         override fun getMethod(): String = "GET"

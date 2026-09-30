@@ -1,15 +1,28 @@
 package com.uqpay.sdk.ui.threeds
 
+import android.Manifest
+import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Uri
+import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.test.core.app.ApplicationProvider
 import com.uqpay.sdk.ui.UqpayTheme
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -25,6 +38,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowCookieManager
+import java.util.concurrent.TimeUnit
 
 /**
  * What happens to the **real** WebView the 3-D Secure composable builds: when it is
@@ -224,7 +238,194 @@ class ThreeDsWebViewLifetimeTest {
         compose.waitForIdle()
     }
 
+    // ---- a page that fails to load ---------------------------------------------------------------
+
+    /**
+     * The 2026-09-29 device finding. The WebView's own error page names the ACS host, is
+     * never reloaded, and offered the customer nothing but Cancel.
+     */
+    @Test
+    fun `a failed page load is replaced by the SDK's own panel, and Try again loads a fresh WebView`() {
+        freezeEndlessAnimations()
+        var nudges = 0
+        showChallenge(onReturned = { nudges++ })
+        val failed = requireWebView()
+
+        failMainFrame(failed)
+
+        compose.onNodeWithText(LOAD_FAILED).assertIsDisplayed()
+        assertEquals("a page that did not load says nothing about the payment; nothing is nudged", 0, nudges)
+
+        compose.onNodeWithText(TRY_AGAIN).performClick()
+        awaitFrames("the challenge to be loaded again") {
+            webView()?.let { it !== failed && shadowOf(it).lastLoadedUrl == challengeUrl } == true
+        }
+    }
+
+    /**
+     * API 24's version of the same network loss: the ACS page is up, its 3DS-method iframe
+     * timed out, and the page sits blank forever. The page is left alone — a beacon fails
+     * the same way — and the customer is given a way to start it again.
+     */
+    @Test
+    fun `a sub-frame network failure leaves the challenge on screen and offers Reload`() {
+        freezeEndlessAnimations()
+        showChallenge()
+        val web = requireWebView()
+        compose.onNodeWithText(RELOAD).assertDoesNotExist()
+
+        compose.runOnUiThread {
+            (shadowOf(web).webViewClient as ThreeDsWebViewClient).onLoadError(
+                url = "https://acs.example.invalid/3dsmethod/collect",
+                mainFrame = false,
+                errorCode = WebViewClient.ERROR_TIMEOUT,
+            )
+        }
+        awaitFrames("Reload to be offered") { compose.onAllNodesWithText(RELOAD).fetchSemanticsNodes().isNotEmpty() }
+        assertSame("nothing is reloaded on the customer's behalf", web, webView())
+
+        compose.onNodeWithText(RELOAD).performClick()
+        awaitFrames("a fresh WebView to load the challenge") {
+            webView()?.let { it !== web && shadowOf(it).lastLoadedUrl == challengeUrl } == true
+        }
+        awaitFrames("Reload to be withdrawn once it has been used") {
+            compose.onAllNodesWithText(RELOAD).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    @Test
+    fun `a page still loading after the stall window offers Reload, and a page that finishes does not`() {
+        freezeEndlessAnimations()
+        showChallenge()
+        val web = requireWebView()
+
+        compose.mainClock.advanceTimeBy(ThreeDsWebView.STALL_MILLIS - 1_000L)
+        compose.waitForIdle()
+        compose.onNodeWithText(RELOAD).assertDoesNotExist()
+
+        compose.mainClock.advanceTimeBy(2_000L)
+        awaitFrames("Reload to be offered") { compose.onAllNodesWithText(RELOAD).fetchSemanticsNodes().isNotEmpty() }
+        assertSame(web, webView())
+
+        compose.runOnUiThread { shadowOf(web).webViewClient.onPageFinished(web, challengeUrl) }
+        awaitFrames("Reload to be withdrawn from a page that loaded") {
+            compose.onAllNodesWithText(RELOAD).fetchSemanticsNodes().isEmpty()
+        }
+        compose.mainClock.advanceTimeBy(ThreeDsWebView.STALL_MILLIS * 2)
+        compose.waitForIdle()
+        compose.onNodeWithText(RELOAD).assertDoesNotExist()
+    }
+
+    @Test
+    fun `a fresh action after a failed load is shown, not swallowed by the error panel`() {
+        freezeEndlessAnimations()
+        var content: ThreeDsContent by mutableStateOf(ThreeDsContent.Url(challengeUrl))
+        compose.setContent {
+            UqpayTheme {
+                ThreeDsScreen(
+                    content = content,
+                    sessionKey = INTENT,
+                    returnUrlPrefixes = emptyList(),
+                    onReturnedFromChallenge = {},
+                    onCancel = {},
+                )
+            }
+        }
+        compose.waitForIdle()
+        failMainFrame(requireWebView())
+
+        compose.runOnUiThread { content = ThreeDsContent.Url(secondStageUrl) }
+        awaitFrames("the second challenge to be loaded") {
+            webView()?.let { shadowOf(it).lastLoadedUrl == secondStageUrl } == true
+        }
+    }
+
+    @Test
+    fun `the page reloads by itself when the network returns, if the host app can observe it`() {
+        freezeEndlessAnimations()
+        shadowOf(application).grantPermissions(Manifest.permission.ACCESS_NETWORK_STATE)
+        showChallenge()
+        failMainFrame(requireWebView())
+        val callback = shadowOf(connectivity).networkCallbacks.single()
+        val network = connectivity.activeNetwork!!
+
+        // The network was up when the page failed (the default here), so "a network is
+        // available" on its own is not a return — acting on it is a reload loop against an
+        // ACS that is simply down.
+        callback.onAvailable(network)
+        shadowOf(Looper.getMainLooper()).idleFor(ThreeDsReconnect.SETTLE_MILLIS, TimeUnit.MILLISECONDS)
+        settle()
+        assertNull("no reload without an offline-to-online transition", webView())
+
+        callback.onLost(network)
+        callback.onAvailable(network)
+        shadowOf(Looper.getMainLooper()).idleFor(ThreeDsReconnect.SETTLE_MILLIS, TimeUnit.MILLISECONDS)
+        awaitFrames("the challenge to be reloaded once the network is back") {
+            webView()?.let { shadowOf(it).lastLoadedUrl == challengeUrl } == true
+        }
+        assertTrue(
+            "the callback is released with the panel, or every failed load leaks one",
+            shadowOf(connectivity).networkCallbacks.isEmpty(),
+        )
+    }
+
+    /**
+     * `ACCESS_NETWORK_STATE` is the host app's to declare, not this SDK's. Without it the
+     * platform throws on registration, so the screen must not even try.
+     */
+    @Test
+    fun `without the host's network-state permission nothing is registered and Try again still works`() {
+        freezeEndlessAnimations()
+        shadowOf(application).denyPermissions(Manifest.permission.ACCESS_NETWORK_STATE)
+        showChallenge()
+
+        failMainFrame(requireWebView())
+
+        assertTrue(shadowOf(connectivity).networkCallbacks.isEmpty())
+        compose.onNodeWithText(TRY_AGAIN).performClick()
+        awaitFrames("the challenge to be loaded again") {
+            webView()?.let { shadowOf(it).lastLoadedUrl == challengeUrl } == true
+        }
+    }
+
     // ---- helpers -------------------------------------------------------------------------------
+
+    private val application: Application get() = ApplicationProvider.getApplicationContext()
+
+    private val connectivity: ConnectivityManager
+        get() = application.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+    private fun showChallenge(onReturned: () -> Unit = {}) {
+        compose.setContent {
+            UqpayTheme {
+                ThreeDsScreen(
+                    content = ThreeDsContent.Url(challengeUrl),
+                    sessionKey = INTENT,
+                    returnUrlPrefixes = emptyList(),
+                    onReturnedFromChallenge = onReturned,
+                    onCancel = {},
+                )
+            }
+        }
+        compose.waitForIdle()
+    }
+
+    /** Drives the client the way the framework does when the main-frame navigation fails. */
+    private fun failMainFrame(web: WebView) {
+        compose.runOnUiThread {
+            shadowOf(web).webViewClient.onReceivedError(web, request(challengeUrl, mainFrame = true), null)
+        }
+        awaitFrames("the failed WebView to be released") { webView() == null }
+    }
+
+    private fun request(url: String, mainFrame: Boolean): WebResourceRequest = object : WebResourceRequest {
+        override fun getUrl(): Uri = Uri.parse(url)
+        override fun isForMainFrame(): Boolean = mainFrame
+        override fun isRedirect(): Boolean = false
+        override fun hasGesture(): Boolean = false
+        override fun getMethod(): String = "GET"
+        override fun getRequestHeaders(): MutableMap<String, String> = mutableMapOf()
+    }
 
     private fun killRenderer(web: WebView) {
         compose.runOnUiThread {
@@ -246,6 +447,7 @@ class ThreeDsWebViewLifetimeTest {
      */
     private fun awaitFrames(what: String, condition: () -> Boolean) {
         repeat(MAX_FRAMES) {
+            applyStateWrites()
             compose.mainClock.advanceTimeByFrame()
             compose.waitForIdle()
             if (condition()) return
@@ -253,9 +455,24 @@ class ThreeDsWebViewLifetimeTest {
         fail("waited $MAX_FRAMES frames for $what")
     }
 
+    /**
+     * Hands state written outside a composition to the recomposer.
+     *
+     * In an app Compose does this by itself. Here it only happens as a side effect of a
+     * frame somebody is waiting for, and the load-failed panel is the one state of this
+     * screen with nothing animating — so a write made while it is showing (a new action
+     * from the engine, a reload when the network returns) sat unapplied and the panel never
+     * left. It passed alone and failed in a suite run, where the process-wide fallback that
+     * would have applied it belongs to an earlier test's looper.
+     */
+    private fun applyStateWrites() {
+        compose.runOnUiThread { Snapshot.sendApplyNotifications() }
+    }
+
     /** Advances well past any plausible settling point, for assertions that nothing changed. */
     private fun settle() {
         repeat(MAX_FRAMES) {
+            applyStateWrites()
             compose.mainClock.advanceTimeByFrame()
             compose.waitForIdle()
         }
@@ -276,6 +493,9 @@ class ThreeDsWebViewLifetimeTest {
     private companion object {
         const val INTENT = "PI_webview_lifetime_test"
         const val INTERRUPTED = "Verification was interrupted; checking with your bank"
+        const val LOAD_FAILED = "We couldn't load your bank's verification page. Check your connection and try again."
+        const val TRY_AGAIN = "Try again"
+        const val RELOAD = "Reload"
         const val DEEP_IN_CHALLENGE = "https://acs.example.invalid/challenge/abc/otp-entered"
         const val MAX_FRAMES = 60
     }

@@ -183,6 +183,10 @@
     <string name="uqpay_threeds_interrupted">Verification was interrupted. Checking with your bank…</string>
     <string name="uqpay_cd_threeds_interrupted">Verification was interrupted; checking with your bank</string>
     <string name="uqpay_cd_threeds_cancel">Cancel verification and leave this screen</string>
+    <string name="uqpay_threeds_load_failed">We couldn\'t load your bank\'s verification page. Check your connection and try again.</string>
+    <string name="uqpay_threeds_retry">Try again</string>
+    <string name="uqpay_threeds_reload">Reload</string>
+    <string name="uqpay_cd_threeds_retry">Load the verification page again</string>
 
     <!-- ==========================================================================
          UQPayError.message — one sentence per UQPayErrorCode.

@@ -114,6 +114,33 @@ internal class ThreeDsWebViewDeviceTest {
         assertEquals("\"${ThreeDsWebView.IFRAME_BASE_URL}\"", origin.get())
     }
 
+    /**
+     * A main-frame navigation that fails at the network level reaches the client as a
+     * main-frame load error on a **real** WebView — the signal the screen's error panel is
+     * built on, and one Robolectric can only simulate. `.invalid` never resolves (RFC 2606),
+     * so this needs no network and fails the same way with or without one.
+     */
+    @Test
+    fun aFailedMainFrameNavigationIsReportedByARealWebView() {
+        val failed = CountDownLatch(1)
+        val reachedReturnUrl = AtomicReference(false)
+        instrumentation.runOnMainSync {
+            webView.webViewClient = ThreeDsWebViewClient(
+                returnUrlPrefixes = emptyList(),
+                onStarted = {},
+                onFinished = {},
+                onVisited = {},
+                onReachedReturnUrl = { reachedReturnUrl.set(true) },
+                onMainFrameLoadFailed = { failed.countDown() },
+                onSubFrameLoadFailed = {},
+                onRendererGone = {},
+            )
+            ThreeDsWebView.load(webView, ThreeDsContent.Url("https://acs.example.invalid/challenge"))
+        }
+        assertTrue("the main-frame failure was never reported", failed.await(30, TimeUnit.SECONDS))
+        assertFalse("a failed load is not the end of the browser step", reachedReturnUrl.get())
+    }
+
     /** The address a redirect and a fragment are each recorded against. */
     @Test
     fun originUrlOfMatchesTheContentKind() {

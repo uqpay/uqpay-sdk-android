@@ -53,7 +53,7 @@ public object UQPay {
     private val configuration = AtomicReference<UQPayConfiguration?>(null)
     private val appContext = AtomicReference<Context?>(null)
 
-    /** SDK version string, e.g. `"0.1.0"`. */
+    /** SDK version string, e.g. `"0.1.1"`. */
     @JvmStatic
     public val version: String
         get() = BuildConfig.UQPAY_SDK_VERSION

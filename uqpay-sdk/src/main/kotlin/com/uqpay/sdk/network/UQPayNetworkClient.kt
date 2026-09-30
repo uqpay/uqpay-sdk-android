@@ -89,10 +89,12 @@ internal class DefaultUQPayNetworkClient(
 
     /**
      * Retry only when the request itself is safe to repeat. A mutating call without an
-     * idempotency key is never retried: resending it could charge the customer twice.
+     * idempotency key is never retried: resending it could charge the customer twice. A
+     * [UQPayRequest.singleAttempt] request is never retried here either — its caller is the
+     * retry loop.
      */
     private fun canRetry(request: UQPayRequest, attempt: Int): Boolean =
-        request.isRetrySafe && attempt < maxRetries
+        request.isRetrySafe && !request.singleAttempt && attempt < maxRetries
 
     private fun shouldRetry(status: Int): Boolean = status == 429 || status >= 500
 

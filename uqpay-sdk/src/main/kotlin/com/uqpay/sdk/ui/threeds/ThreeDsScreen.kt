@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.os.Build
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -20,13 +21,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -39,6 +44,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.uqpay.sdk.R
+import kotlinx.coroutines.delay
 
 /**
  * What the 3-D Secure step has to show, in the UI layer's own vocabulary.
@@ -93,6 +99,28 @@ internal sealed class ThreeDsContent {
  * intent — and is detected by the engine's poller (G14). Neither is this screen's decision;
  * it re-renders whatever it is given and reports.
  *
+ * ### A page that fails to load is this screen's to explain
+ *
+ * Losing the network while the issuer's page loads used to strand the customer with Cancel
+ * as the only control, and it does so in two shapes (both seen on the 2026-09-29 device pass):
+ *
+ * - **The main frame fails.** The WebView shows its own "Webpage not available" page with the
+ *   raw ACS address on it, and never reloads it. The screen now replaces the WebView with its
+ *   own panel — a sentence and a **Try again** — and, where the host app can observe
+ *   connectivity, reloads by itself when the network returns ([ThreeDsReconnect]).
+ * - **The main frame loads and then stalls.** The ACS page arrives, its hidden 3DS-method
+ *   iframe does not, and the customer looks at a blank white page under a progress bar that
+ *   never ends (API 24's WebView 53, every time). Nothing failed that this screen can name,
+ *   so nothing is replaced: a **Reload** action appears beside Cancel once the page has been
+ *   loading for [ThreeDsWebView.STALL_MILLIS] or a sub-frame has failed at the network level.
+ *   It is never automatic — the same signals can fire on a challenge the customer is
+ *   half-way through typing an OTP into, and that is theirs to reload, not ours.
+ *
+ * Either way the reload is the same act: [content] loaded into a fresh WebView, which is
+ * exactly what a configuration change already does, so the issuer sees no new request shape.
+ * The engine's poll runs throughout and still decides the outcome; nothing here settles
+ * anything.
+ *
  * ### Rotation must not end the authentication (B1)
  *
  * A configuration change destroys this composition and its WebView, and the recreated screen
@@ -132,6 +160,10 @@ internal fun ThreeDsScreen(
     val interruptedDescription = stringResource(R.string.uqpay_cd_threeds_interrupted)
     val loadingDescription = stringResource(R.string.uqpay_cd_threeds_loading)
     val webDescription = stringResource(R.string.uqpay_cd_threeds_web)
+    val loadFailedText = stringResource(R.string.uqpay_threeds_load_failed)
+    val retryLabel = stringResource(R.string.uqpay_threeds_retry)
+    val reloadLabel = stringResource(R.string.uqpay_threeds_reload)
+    val retryDescription = stringResource(R.string.uqpay_cd_threeds_retry)
 
     // Screen-only, in memory only. Nothing here is card-derived and nothing here is worth a
     // Bundle: after a rotation the engine's state re-drives this screen from the top.
@@ -148,6 +180,34 @@ internal fun ThreeDsScreen(
     // WebView could have finished.
     var interrupted by remember(content) { mutableStateOf(false) }
 
+    // The issuer's page failed to load in the main frame. Keyed on [content] for the same
+    // reason as [interrupted]: a fresh action from the engine deserves a fresh WebView, not
+    // the previous action's error panel.
+    var loadFailed by remember(content) { mutableStateOf(false) }
+
+    // The quieter trouble signals, which reveal Reload without replacing anything: a
+    // sub-frame failed at the network level, or the page has been loading for too long.
+    var subFrameFailed by remember(content) { mutableStateOf(false) }
+    var stalled by remember(content) { mutableStateOf(false) }
+
+    // Bumped to discard the WebView and build a new one, which loads [content] from the top.
+    var reloads by remember(content) { mutableIntStateOf(0) }
+    val retry: () -> Unit = {
+        loading = true
+        loadFailed = false
+        subFrameFailed = false
+        reloads += 1
+    }
+
+    val browsing = !finished && !interrupted && !loadFailed
+    LaunchedEffect(content, reloads, loading, browsing) {
+        stalled = false
+        if (loading && browsing) {
+            delay(ThreeDsWebView.STALL_MILLIS)
+            stalled = true
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -162,6 +222,14 @@ internal fun ThreeDsScreen(
                     .weight(1f)
                     .padding(start = 8.dp),
             )
+            if (browsing && (stalled || subFrameFailed)) {
+                TextButton(
+                    onClick = retry,
+                    modifier = Modifier.semantics { contentDescription = retryDescription },
+                ) {
+                    Text(reloadLabel)
+                }
+            }
             TextButton(
                 onClick = onCancel,
                 modifier = Modifier.semantics { contentDescription = cancelDescription },
@@ -169,7 +237,7 @@ internal fun ThreeDsScreen(
                 Text(cancelLabel)
             }
         }
-        if (loading && !finished && !interrupted) {
+        if (loading && browsing) {
             LinearProgressIndicator(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -201,7 +269,31 @@ internal fun ThreeDsScreen(
                         textAlign = TextAlign.Center,
                     )
                 }
-            } else {
+            } else if (loadFailed) {
+                // SDK-drawn, so the customer never sees the WebView's own error page and
+                // the ACS address printed on it.
+                ThreeDsReconnect.RetryWhenBackOnline(onBackOnline = retry)
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = loadFailedText,
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Button(
+                        onClick = retry,
+                        modifier = Modifier.semantics { contentDescription = retryDescription },
+                    ) {
+                        Text(retryLabel)
+                    }
+                }
+            } else key(reloads) {
                 AndroidView(
                     modifier = Modifier
                         .fillMaxSize()
@@ -218,6 +310,8 @@ internal fun ThreeDsScreen(
                                     finished = true
                                     onReturnedFromChallenge()
                                 },
+                                onMainFrameLoadFailed = { loadFailed = true },
+                                onSubFrameLoadFailed = { subFrameFailed = true },
                                 onRendererGone = {
                                     interrupted = true
                                     // The challenge cannot be finished now, but the intent
@@ -422,6 +516,15 @@ internal object ThreeDsWebView {
         webView.destroy()
     }
 
+    /**
+     * How long a page may go on loading before the customer is offered Reload.
+     *
+     * Long enough that an ordinary issuer page on a slow connection never shows the action,
+     * short enough that someone watching a blank page has not already given up. It only
+     * reveals a button; nothing is reloaded on the customer's behalf.
+     */
+    const val STALL_MILLIS: Long = 10_000L
+
     private const val ABOUT_BLANK = "about:blank"
 }
 
@@ -506,7 +609,7 @@ internal object ThreeDsReturnUrl {
 
 /**
  * Watches navigation for the end of the browser step, drives the progress bar, records which
- * origins the step touched, and survives a renderer crash.
+ * origins the step touched, reports a page that failed to load, and survives a renderer crash.
  *
  * `shouldOverrideUrlLoading` returns true for a return URL, which both stops the WebView
  * trying to load a scheme it cannot handle and prevents the customer seeing the merchant's
@@ -529,6 +632,8 @@ internal class ThreeDsWebViewClient(
     private val onFinished: () -> Unit,
     private val onVisited: (String) -> Unit,
     private val onReachedReturnUrl: () -> Unit,
+    private val onMainFrameLoadFailed: () -> Unit,
+    private val onSubFrameLoadFailed: () -> Unit,
     private val onRendererGone: () -> Unit,
 ) : WebViewClient() {
 
@@ -578,6 +683,54 @@ internal class ThreeDsWebViewClient(
     }
 
     /**
+     * A resource failed to load at the network level — no connection, DNS, a timeout.
+     *
+     * Only a **main-frame** failure replaces the page. An access control server loads
+     * fingerprint iframes, beacons and fonts, any of which can fail without the customer
+     * noticing or the challenge caring; replacing a working page because a tracking pixel
+     * timed out would create the very dead end this exists to remove. A sub-frame failure
+     * is reported separately, only when it is connectivity-shaped ([CONNECTIVITY_ERRORS]),
+     * and all it does is offer the customer a Reload: it is how a lost 3DS-method iframe
+     * looks, and that one does stall the whole step.
+     *
+     * A main-frame failure on a URL the WebView was never meant to render is not a failure.
+     * A return URL that got this far — a server redirect the WebView followed without asking
+     * `shouldOverrideUrlLoading` — is the end of the browser step, as it would have been
+     * there. A device-handler URL is dropped, as it is there.
+     *
+     * `onReceivedHttpError` is deliberately **not** overridden. A 4xx/5xx from the issuer
+     * still renders the issuer's own body — often the page that explains a failed
+     * authentication and then redirects to the return URL — and covering it with our panel
+     * would hide the real end of the step.
+     *
+     * The error's description is not read, logged or shown: it names the ACS host.
+     */
+    override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+        onLoadError(
+            url = request?.url?.toString().orEmpty(),
+            mainFrame = request?.isForMainFrame == true,
+            errorCode = error?.errorCode ?: WebViewClient.ERROR_UNKNOWN,
+        )
+    }
+
+    /**
+     * [onReceivedError] with the framework types taken apart — `WebResourceError` has no
+     * public constructor, so a test cannot hand one in.
+     */
+    fun onLoadError(url: String, mainFrame: Boolean, errorCode: Int) {
+        if (!mainFrame) {
+            if (errorCode in CONNECTIVITY_ERRORS) onSubFrameLoadFailed()
+            return
+        }
+        if (ThreeDsReturnUrl.isDeviceHandlerUrl(url)) return
+        if (ThreeDsReturnUrl.isEndOfBrowserStep(url, returnUrlPrefixes)) {
+            onReachedReturnUrl()
+            return
+        }
+        onMainFrameLoadFailed()
+    }
+
+    /**
      * The WebView's renderer process died — crashed, or was killed by the system to reclaim
      * memory while the app was in the background (M-render).
      *
@@ -597,5 +750,19 @@ internal class ThreeDsWebViewClient(
     override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
         onRendererGone()
         return true
+    }
+
+    private companion object {
+        /**
+         * The errors that mean "the network", as opposed to "this one resource": a blocked
+         * scheme, a bad URL or a failed TLS handshake on a beacon says nothing about whether
+         * the customer can finish the challenge.
+         */
+        val CONNECTIVITY_ERRORS: Set<Int> = setOf(
+            WebViewClient.ERROR_HOST_LOOKUP,
+            WebViewClient.ERROR_CONNECT,
+            WebViewClient.ERROR_TIMEOUT,
+            WebViewClient.ERROR_IO,
+        )
     }
 }

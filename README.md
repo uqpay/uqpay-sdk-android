@@ -31,6 +31,66 @@ Android Payment Gateway SDK for [UQPAY](https://uqpay.com).
   The full dependency list is documented in the integration guide.
 - **English only for now**, with every string overridable from your own app.
 
+## Quick start
+
+Your backend holds the `x-api-key`, mints the access token and creates the payment intent.
+The app only ever sees a client id, a short-lived token and an intent id.
+
+**1. Initialize once**, in your `Application`:
+
+```kotlin
+UQPay.initialize(
+    context = this,
+    configuration = UQPayConfiguration(
+        clientId = "your-client-id",
+        environment = Environment.SANDBOX, // Environment.PRODUCTION for live
+        tokenProvider = {
+            // Called off the main thread. Fetch the token from YOUR backend —
+            // the x-api-key must never be in the app.
+            val response = myBackend.fetchUqpayToken()
+            UQPayAuthToken(response.token, response.expiresAtEpochMillis)
+        },
+    ),
+)
+```
+
+**2. Create the launcher in `onCreate`** — unconditionally, on every creation, so a result
+can be redelivered after process death — and **3. launch** with an intent id from your
+backend:
+
+```kotlin
+class CheckoutActivity : ComponentActivity() {
+
+    private lateinit var payments: UQPayPaymentLauncher
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        payments = UQPay.createPaymentLauncher(this) { result ->
+            when (result.status) {
+                PaymentStatus.SUCCEEDED -> confirmWithBackend(result.paymentIntentId)
+                PaymentStatus.FAILED    -> showError(result.error?.message)
+                PaymentStatus.CANCELLED -> Unit
+                PaymentStatus.PENDING   -> awaitWebhook(result.paymentIntentId)
+            }
+        }
+    }
+
+    private fun pay(paymentIntentId: String) {
+        payments.launch(PaymentSessionParams(paymentIntentId))
+    }
+}
+```
+
+**4. Handle the four outcomes.** The result is advisory: the
+`acquiring.payment_intent.succeeded` webhook on your backend is the only proof that money
+moved. `PENDING` means the SDK stopped waiting, not that the payment failed — do not retry,
+refund or release the order; wait for the webhook.
+
+A Fragment works the same way (`createPaymentLauncher` takes any `ActivityResultCaller`),
+and [`sample-app/`](sample-app) is a complete Views-based integration. The full
+integration guide, API reference and error-code list are distributed separately — ask your
+UQPAY contact, or [it@uqpay.com](mailto:it@uqpay.com).
+
 ## Modules
 
 - **`uqpay-sdk/`** — the SDK library (published as `com.uqpay.sdk:uqpay-sdk-android`)

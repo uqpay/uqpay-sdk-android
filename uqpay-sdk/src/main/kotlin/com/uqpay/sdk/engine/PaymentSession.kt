@@ -500,7 +500,13 @@ internal class PaymentSession private constructor(
                 logger = logger,
             )
             val confirmStep = ConfirmStep.forIntent(runner, intentSource, confirmSender)
-            val watchStep = WatchStep.forIntent(intentSource, deps.clock, logger)
+            // The poller reads through its own source: one request per attempt, because the
+            // poller is already the retry loop (see IntentSource.forPolling).
+            val watchStep = WatchStep.forIntent(
+                IntentSource.forPolling(apiClient, paymentIntentId),
+                deps.clock,
+                logger,
+            )
 
             // The scope: supervised so one failed child cannot take the others down, and
             // owned here rather than by any lifecycle (§2a).

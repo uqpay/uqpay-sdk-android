@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follo
 ## [Unreleased]
 
 ### Fixed
+- **Losing the network on the 3-D Secure screen no longer strands the customer.** A page
+  that fails to load used to leave the WebView's own "Webpage not available" page on screen,
+  issuer address and all (a blank white page on Android 7), never reloaded, with Cancel as
+  the only control. The sheet now shows its own message with **Try again**; a page that
+  loads and then stalls offers **Reload** beside Cancel after ten seconds. If the host app
+  holds `ACCESS_NETWORK_STATE` — the SDK does not declare it — a failed page also reloads by
+  itself when the network returns. The outcome is still decided by the API and nothing else.
+  Known limit: when the network drops *after* the issuer's page has started, the issuer's
+  session for that attempt is usually spent, so Reload gets the customer off the dead page
+  but the payment ends `PENDING` and needs a new intent.
+- **An offline 3-D Secure or wallet poll now ends when the docs say it does.** Each poll
+  read also ran the transport's 2s/4s/8s retry ladder, so with no network every attempt took
+  ~16 seconds instead of 2 and the five-minute 3-D Secure window ran for roughly forty. Poll
+  reads are now sent once; the poller's next attempt is the retry.
 - **`SingleWallet(PaymentMethodType.CARD)` is refused before any network call.** It
   type-checks — `SingleWallet` takes any `PaymentMethodType` — and used to reach the sheet's
   auto-confirm, which sent a *wallet* confirm typed `card` (a body the gateway has no reading

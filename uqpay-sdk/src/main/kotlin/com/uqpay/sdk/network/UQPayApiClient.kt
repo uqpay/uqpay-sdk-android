@@ -18,13 +18,19 @@ internal class UQPayApiClient(
     private val logger: UQPayLogger = UQPayLogger.Noop,
 ) {
 
-    /** Reads the current state of an intent. The source of truth after every step. */
-    suspend fun retrieveIntent(paymentIntentId: String): PaymentIntentDto {
+    /**
+     * Reads the current state of an intent. The source of truth after every step.
+     *
+     * @param singleAttempt skip the transport's retry ladder; see [UQPayRequest.singleAttempt].
+     *   Only the intent poller passes true — it re-reads on its own schedule.
+     */
+    suspend fun retrieveIntent(paymentIntentId: String, singleAttempt: Boolean = false): PaymentIntentDto {
         require(paymentIntentId.isNotBlank()) { "paymentIntentId must not be blank" }
         return call(
             UQPayRequest(
                 method = HttpMethod.GET,
                 url = "${configuration.environment.baseUrl}/v2/payment_intents/$paymentIntentId",
+                singleAttempt = singleAttempt,
             ),
         )
     }
@@ -85,6 +91,7 @@ internal class UQPayApiClient(
             ),
             idempotencyKey = request.idempotencyKey,
             body = request.body,
+            singleAttempt = request.singleAttempt,
         )
         return networkClient.execute(authenticated)
     }

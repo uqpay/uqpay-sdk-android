@@ -6,6 +6,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versioning follo
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-09-30
+
+A fixes-only release. The public API is unchanged from 0.1.0, so upgrading is a version
+bump and nothing else.
+
 ### Fixed
 - **Losing the network on the 3-D Secure screen no longer strands the customer.** A page
   that fails to load used to leave the WebView's own "Webpage not available" page on screen,

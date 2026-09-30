@@ -7,10 +7,10 @@ would much rather hear about a problem early than read about it later.
 
 | Version | Supported |
 | ------- | --------- |
-| `0.1.x` (pre-release) | ✅ Current development line |
+| `0.1.x` | ✅ Security fixes ship as a new `0.1.x` patch release |
 
-No version has been released yet. Once `0.1.0` ships, this table will list the release
-lines that receive security fixes.
+Always upgrade to the latest `0.1.x`: a published release is immutable, so a fix is never
+applied to an existing version.
 
 ## Reporting a vulnerability
 
